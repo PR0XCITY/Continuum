@@ -2,12 +2,6 @@
 .env
 config/local.yaml
 
-# AI assistant instructions and installed skills. Kept on disk for local
-# tooling; never tracked or pushed to the public remote.
-/CLAUDE.md
-/.claude/
-/.agents/
-
 # Runtime data: baselines, SQLite, Chroma, logs. Never committed; only the
 # directory placeholders below are tracked so the tree exists on checkout.
 data/*
