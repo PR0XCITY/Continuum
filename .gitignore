@@ -1,0 +1,52 @@
+# Secrets and local overrides
+.env
+config/local.yaml
+
+# AI assistant instructions and installed skills. Kept on disk for local
+# tooling; never tracked or pushed to the public remote.
+/CLAUDE.md
+/.claude/
+/.agents/
+
+# Runtime data: baselines, SQLite, Chroma, logs. Never committed; only the
+# directory placeholders below are tracked so the tree exists on checkout.
+data/*
+!data/.gitkeep
+!data/baselines/
+!data/db/
+!data/chroma/
+!data/logs/
+data/baselines/*
+!data/baselines/.gitkeep
+data/db/*
+!data/db/.gitkeep
+data/chroma/*
+!data/chroma/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Chroma can also write its own files outside data/ depending on client
+# config; ignore the common locations defensively.
+chroma.sqlite3
+*.chroma
+
+# Editors and OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

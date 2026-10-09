@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "continuum"
+version = "0.1.0"
+description = "Closed-loop HID injection detection, incident recording and local RAG assistant for Windows."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.34.0",
+    "pydantic==2.10.4",
+    "SQLAlchemy==2.0.36",
+    "scikit-learn==1.6.0",
+    "numpy==2.2.1",
+    "pandas==2.2.3",
+    "sentence-transformers==3.3.1",
+    "chromadb==0.5.23",
+    "httpx==0.28.1",
+    "streamlit==1.41.1",
+    "PyYAML==6.0.2",
+    "python-dotenv==1.0.1",
+    "winotify==1.1.0 ; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "pytest-mock==3.14.0",
+    "ruff==0.8.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["continuum"]

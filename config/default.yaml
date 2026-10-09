@@ -1,0 +1,75 @@
+# Continuum default configuration.
+#
+# This file holds sane defaults for a college-project deployment on a
+# single Windows workstation. Override any value with an environment
+# variable (see .env.example) or a local override file; see
+# src/continuum/common/config.py for precedence rules.
+#
+# No key identity is configured here because none is ever captured.
+
+detection:
+  # Number of consecutive key events per device used to compute one
+  # feature window. Small enough to react fast, large enough to be
+  # statistically meaningful.
+  window_size: 40
+
+  # Minimum inter-key interval, in milliseconds, below which events are
+  # treated as the same physical press for counting purposes. Filters
+  # keyboard controller jitter, not an attack signal by itself.
+  debounce_ms: 8
+
+  # Anomaly score threshold above which a window is flagged. Scale is
+  # model-dependent; tune against tools/simulators.py output before
+  # trusting this value on real hardware.
+  anomaly_threshold: 0.65
+
+  # Number of consecutive flagged windows required before a response is
+  # triggered. Prevents one noisy window from causing a block.
+  debounce_windows: 2
+
+response:
+  # "enforce": lock the workstation and disable the device.
+  # "alert_only": raise a toast notification but take no blocking action.
+  # Use alert_only while tuning detection on a new machine.
+  mode: enforce
+
+  # Seconds a disabled device stays disabled before Continuum
+  # automatically re-enables it. Hard safety rail against a permanent
+  # lockout; see CLAUDE.md.
+  auto_release_timeout_seconds: 300
+
+  # Device identifiers (Win32 device instance IDs or interface paths)
+  # that must never be disabled, for example a laptop's built-in
+  # keyboard. Empty by default; fill in before running on real hardware.
+  allowlist: []
+
+connector:
+  host: 127.0.0.1
+  port: 8731
+  database_path: data/db/continuum.sqlite3
+
+  # Name of the environment variable holding the bearer token. The token
+  # value itself belongs in .env, never in this file.
+  auth_token_env_var: CONTINUUM_API_TOKEN
+
+rag:
+  ollama_host: http://127.0.0.1:11434
+  ollama_model: llama3.1:8b
+  embedding_model: all-MiniLM-L6-v2
+  chroma_path: data/chroma
+  chroma_collection: continuum_incidents
+
+  # Minimum similarity score, and minimum number of supporting passages,
+  # required before IncidentRAG will attempt an answer instead of
+  # returning "I don't know".
+  min_similarity: 0.45
+  min_supporting_passages: 2
+  top_k: 5
+
+dashboard:
+  host: 127.0.0.1
+  port: 8501
+
+logging:
+  level: INFO
+  directory: data/logs
