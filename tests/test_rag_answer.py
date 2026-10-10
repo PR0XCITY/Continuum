@@ -22,6 +22,7 @@ from continuum.rag.answer import (
     generate_answer,
     split_sentences,
 )
+from continuum.rag.confidence import ABSTENTION_MESSAGE, best_possible_confidence
 from continuum.rag.retrieve import RetrievedChunk, hybrid_retrieve
 
 
@@ -246,3 +247,40 @@ def test_answer_question_handles_ollama_unavailable_without_crashing(monkeypatch
     assert result.abstained is True
     assert result.answer is None
     assert "Ollama" in result.message
+
+
+# --- refusing before the LLM when no answer could pass the gate ----------------
+
+
+def _weak_chunk(number):
+    chunk = _chunk(number, f"unrelated text {number}")
+    return RetrievedChunk(
+        **{**chunk.__dict__, "dense_similarity": 0.05, "fused_score": 0.01}
+    )
+
+
+def test_hopeless_question_is_refused_without_calling_the_llm(monkeypatch):
+    def must_not_run(*_args, **_kwargs):
+        raise AssertionError("the LLM must not be called when no answer could pass the gate")
+
+    monkeypatch.setattr(answer, "generate_answer", must_not_run)
+    monkeypatch.setattr(
+        answer, "hybrid_retrieve", lambda *_a, **_k: [_weak_chunk(1), _weak_chunk(2)]
+    )
+
+    result = answer_question(
+        "What is the capital of Peru?", object(), ollama_host="http://fake", ollama_model="m"
+    )
+
+    assert result.abstained is True
+    assert result.message == ABSTENTION_MESSAGE
+    assert result.confidence < 0.2
+    assert [c.doc_id for c in result.citations] == ["doc-1", "doc-2"]
+
+
+def test_best_possible_confidence_assumes_a_perfectly_supported_answer():
+    strong = [_chunk(1, "a"), _chunk(2, "b")]  # dense similarity 0.9 each
+
+    # 0.35 * 0.9 + 0.15 * 0.0 margin + 0.15 * 1.0 coverage + 0.35 * 1.0 support
+    assert best_possible_confidence(strong) == pytest.approx(0.815)
+    assert best_possible_confidence([_weak_chunk(1)]) < 0.5

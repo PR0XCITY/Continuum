@@ -140,6 +140,23 @@ def compute_confidence(
     )
 
 
+def best_possible_confidence(
+    chunks: list[RetrievedChunk],
+    *,
+    similarity_floor: float = DEFAULT_SIMILARITY_FLOOR,
+    weights: tuple[float, float, float, float] = DEFAULT_WEIGHTS,
+) -> float:
+    """Confidence if a generated answer were perfectly supported by its sources.
+
+    Answer support is the only signal an LLM answer can add, and it is at
+    most 1.0. If even that cannot reach the threshold, no answer could
+    pass the gate, so the LLM need not be called at all.
+    """
+    breakdown = compute_confidence(chunks, similarity_floor=similarity_floor, weights=weights)
+    answer_weight = weights[3]
+    return min(1.0, breakdown.confidence - answer_weight * breakdown.answer_support + answer_weight)
+
+
 def build_citations(chunks: list[RetrievedChunk], *, limit: int = 5) -> list[Citation]:
     return [
         Citation(doc_id=c.doc_id, title=c.title, snippet=c.text[:200], score=c.dense_similarity)

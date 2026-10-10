@@ -229,8 +229,9 @@ def _live_panel(client: ConnectorClient) -> None:
         _html(
             style.card(
                 style.text_block(
-                    "No keyboards reported yet. Start the runtime with `just run-runtime` "
-                    "from an elevated prompt; attached keyboards appear here within seconds."
+                    "No keyboards reported yet. Start everything with .\\tasks.ps1 run-all "
+                    "and approve the administrator prompt; attached keyboards appear here "
+                    "within seconds."
                 )
             )
         )

@@ -31,7 +31,9 @@ from continuum.rag.confidence import (
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_SIMILARITY_FLOOR,
     RagAnswer,
+    best_possible_confidence,
     build_citations,
+    compute_confidence,
     gate_and_build_response,
 )
 from continuum.rag.retrieve import DEFAULT_TOP_K, RetrievedChunk, hybrid_retrieve
@@ -226,6 +228,17 @@ def answer_question(
     if not chunks:
         return RagAnswer(
             answer=None, confidence=0.0, abstained=True, citations=[], message=ABSTENTION_MESSAGE
+        )
+
+    # If even a perfectly supported answer could not pass the gate, refuse now:
+    # no LLM call, and the same answer whether or not Ollama is running.
+    if best_possible_confidence(chunks, similarity_floor=similarity_floor) < confidence_threshold:
+        return RagAnswer(
+            answer=None,
+            confidence=compute_confidence(chunks, similarity_floor=similarity_floor).confidence,
+            abstained=True,
+            citations=build_citations(chunks),
+            message=ABSTENTION_MESSAGE,
         )
 
     try:
