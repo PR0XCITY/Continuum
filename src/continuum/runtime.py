@@ -37,6 +37,10 @@ from continuum.capture.factory import create_capture_source
 from continuum.common.config import Settings, get_settings
 from continuum.common.logging import configure_logging, get_logger
 from continuum.common.schemas import (
+    TRIAL_MS_TO_BLOCK,
+    TRIAL_MS_TO_LOCK,
+    TRIAL_MS_TO_RESPONSE,
+    TRIAL_PRESSES_TO_BLOCK,
     ActionTaken,
     AttackPattern,
     DetectionResult,
@@ -70,6 +74,11 @@ from continuum.response.lockscreen import lock_workstation
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_OUTBOX_PATH = _REPO_ROOT / "data" / "db" / "incident_outbox.sqlite3"
+
+# `tasks.ps1 stop-all` creates this file to ask a running runtime to shut
+# down cleanly. A file works across the elevation boundary, where an
+# ordinary window cannot signal or kill an elevated process.
+STOP_REQUEST_PATH = _REPO_ROOT / "data" / "run" / "runtime.stop"
 
 MAX_BUFFER_EVENTS = 2000
 TRIM_TO_EVENTS = 500
@@ -538,10 +547,13 @@ def write_runtime_status(
         conn.close()
 
 
-TRIAL_PRESSES_TO_BLOCK = "trial_presses_to_block"
-TRIAL_MS_TO_BLOCK = "trial_ms_first_press_to_block"
-TRIAL_MS_TO_LOCK = "trial_ms_first_press_to_lock"
-TRIAL_MS_TO_RESPONSE = "trial_ms_first_press_to_response_done"
+def consume_stop_request(path: Path | None = None) -> bool:
+    """True, and the request file removed, if a clean shutdown was requested."""
+    path = STOP_REQUEST_PATH if path is None else path
+    if not path.exists():
+        return False
+    path.unlink(missing_ok=True)
+    return True
 
 
 def trial_timing_summary(
@@ -682,6 +694,7 @@ def run_maintenance(
     token: str,
     connector_db_path: Path,
 ) -> None:
+    blocker.forget_released_elsewhere()
     released = blocker.check_auto_release()
     for instance_id in released:
         logger.info("auto-released %s after its timeout", instance_id)
@@ -773,6 +786,7 @@ def main(argv: list[str] | None = None) -> None:
     base_url = f"http://{settings.connector.host}:{settings.connector.port}"
     connector_db_path = resolve_database_path(settings)
 
+    consume_stop_request()  # a stale request from an earlier run must not stop this one
     released_on_start = blocker.release_all()
     if released_on_start:
         logger.info(
@@ -829,6 +843,9 @@ def main(argv: list[str] | None = None) -> None:
 
             now_monotonic = time.monotonic()
             if now_monotonic - last_maintenance >= MAINTENANCE_INTERVAL_SECONDS:
+                if consume_stop_request():
+                    print("\nStop requested (stop-all). Stopping.")
+                    break
                 run_maintenance(blocker, outbox, http_client, base_url, token, connector_db_path)
                 write_runtime_status(
                     connector_db_path,

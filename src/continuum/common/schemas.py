@@ -68,6 +68,14 @@ BusType = Literal["USB", "PS2", "Bluetooth", "Unknown"]
 
 _HEX_ID_PATTERN = r"^[0-9A-Fa-f]{4}$"
 
+# Timing figures the runtime adds to IncidentRecord.features_summary,
+# measured from the blocked device's first key press (counts and clock
+# readings only). Read by the dashboard and the hardware trial tools.
+TRIAL_PRESSES_TO_BLOCK = "trial_presses_to_block"
+TRIAL_MS_TO_BLOCK = "trial_ms_first_press_to_block"
+TRIAL_MS_TO_LOCK = "trial_ms_first_press_to_lock"
+TRIAL_MS_TO_RESPONSE = "trial_ms_first_press_to_response_done"
+
 
 class AttackPattern(str, Enum):
     """Shape of a confirmed injection attack, for incident triage."""

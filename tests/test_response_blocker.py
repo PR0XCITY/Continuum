@@ -330,3 +330,47 @@ def test_save_and_load_disabled_devices_roundtrip(tmp_path):
 
 def test_load_disabled_devices_missing_file_returns_empty_list(tmp_path):
     assert load_disabled_devices(tmp_path / "does-not-exist.json") == []
+
+
+# --- releases made by another process (--release-all while the runtime runs) --
+
+
+def _disable_one(blocker, monkeypatch):
+    monkeypatch.setattr(blocker_module, "_pnputil_disable", lambda i: None)
+    monkeypatch.setattr(blocker_module, "is_devnode_started", lambda i: False)
+    result = blocker.disable(CHILD_ID, is_usb=True, allowlist=[], other_enabled_keyboard_count=1)
+    assert result.success
+
+
+def test_forget_released_elsewhere_drops_a_record_another_process_released(
+    blocker, monkeypatch, tmp_path
+):
+    _disable_one(blocker, monkeypatch)
+    # A second blocker (python -m continuum.runtime --release-all) re-enables it.
+    other = DeviceBlocker(disabled_devices_path=tmp_path / "disabled_devices.json")
+    monkeypatch.setattr(blocker_module, "_pnputil_enable", lambda i: None)
+    monkeypatch.setattr(blocker_module, "is_devnode_started", lambda i: True)
+    assert other.release_all() == [CHILD_ID]
+
+    assert blocker.forget_released_elsewhere() == [CHILD_ID]
+    assert not blocker.is_disabled(CHILD_ID)
+
+
+def test_forget_released_elsewhere_keeps_a_device_that_is_still_disabled(
+    blocker, monkeypatch, tmp_path
+):
+    _disable_one(blocker, monkeypatch)
+    # The file lost its entry, but the device is still disabled: keep tracking it,
+    # so auto-release can still re-enable it.
+    (tmp_path / "disabled_devices.json").unlink()
+
+    assert blocker.forget_released_elsewhere() == []
+    assert blocker.is_disabled(CHILD_ID)
+
+
+def test_forget_released_elsewhere_keeps_records_still_on_disk(blocker, monkeypatch):
+    _disable_one(blocker, monkeypatch)
+    monkeypatch.setattr(blocker_module, "is_devnode_started", lambda i: True)
+
+    assert blocker.forget_released_elsewhere() == []
+    assert blocker.is_disabled(CHILD_ID)

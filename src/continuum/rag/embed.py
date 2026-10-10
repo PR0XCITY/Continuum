@@ -38,3 +38,24 @@ def embed_texts(texts: list[str], *, model_name: str = DEFAULT_EMBEDDING_MODEL) 
 def embed_one(text: str, *, model_name: str = DEFAULT_EMBEDDING_MODEL) -> np.ndarray:
     """Embed a single text. Returns a (dim,) unit vector."""
     return embed_texts([text], model_name=model_name)[0]
+
+
+def is_model_cached(model_name: str = DEFAULT_EMBEDDING_MODEL) -> bool:
+    """True if the model loads from the local cache alone, with no network access."""
+    from sentence_transformers import SentenceTransformer
+
+    try:
+        SentenceTransformer(model_name, local_files_only=True)
+    except Exception:
+        return False
+    return True
+
+
+if __name__ == "__main__":
+    # `python -m continuum.rag.embed`: download the model once, during setup,
+    # so every later run works without network access.
+    from continuum.common.config import get_settings
+
+    name = get_settings().rag.embedding_model
+    vector = embed_one("continuum setup check", model_name=name)
+    print(f"Embedding model {name} is ready ({vector.shape[0]} dimensions).")

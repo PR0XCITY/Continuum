@@ -1,48 +1,68 @@
 # Continuum task runner. Requires https://github.com/casey/just.
-# Every recipe here has an equivalent target in tasks.ps1 for machines
-# without just installed. Keep the two in sync.
+# Every recipe calls the matching target in tasks.ps1, which holds the
+# actual commands, so `just <target>` and `.\tasks.ps1 <target>` can never
+# drift apart. See tasks.ps1 for what each target does.
 
 set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
-venv_python := ".venv\\Scripts\\python.exe"
+tasks := "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tasks.ps1"
 
 # List available targets.
 default:
     @just --list
 
-# Create .venv and install pinned requirements, including dev tools.
+# Create .venv, install pinned packages, create .env, download the embedding model.
 setup:
-    py -3.12 -m venv .venv
-    {{venv_python}} -m pip install --upgrade pip
-    {{venv_python}} -m pip install -e ".[dev]"
+    {{tasks}} setup
 
-# Run the test suite. All Win32 calls are mocked, so this runs on any
-# platform.
+# Run the test suite (all Win32 calls mocked).
 test:
-    {{venv_python}} -m pytest
+    {{tasks}} test
 
 # Run the linter.
 lint:
-    {{venv_python}} -m ruff check .
+    {{tasks}} lint
 
-# Run the capture/detection/response loop. Requires an elevated
-# (Administrator) PowerShell session because pnputil device enable and
-# disable needs elevation.
-run-runtime:
-    @Write-Host "run-runtime needs an elevated PowerShell session for pnputil."
-    {{venv_python}} -m continuum.runtime
+# Record a typing baseline; pass a name to record another session, e.g. NAME_fast.
+record-baseline *args:
+    {{tasks}} record-baseline {{args}}
 
-# Run the FastAPI connector, local only, on the port from config/default.yaml.
+# Train and calibrate the cadence model from the baseline.
+train-model *args:
+    {{tasks}} train-model {{args}}
+
+# Run the connector API in this window.
 run-api:
-    {{venv_python}} -m uvicorn continuum.connector.app:app --host 127.0.0.1 --port 8731
+    {{tasks}} run-api
 
-# Run the Streamlit dashboard.
+# Run the Streamlit dashboard in this window.
 run-dashboard:
-    {{venv_python}} -m streamlit run src/continuum/dashboard/app.py --browser.gatherUsageStats false --server.address 127.0.0.1
+    {{tasks}} run-dashboard
 
-# Run the connector and the dashboard together, each in its own window.
-# The runtime is intentionally not included here; it is elevated and run
-# separately with "just run-runtime".
+# Run the HID Firewall runtime in this window (elevated prompt required).
+run-runtime:
+    {{tasks}} run-runtime
+
+# Start the API, the dashboard and the elevated runtime, each in its own window.
 run-all:
-    Start-Process powershell -ArgumentList '-NoExit', '-Command', 'just run-api'
-    Start-Process powershell -ArgumentList '-NoExit', '-Command', 'just run-dashboard'
+    {{tasks}} run-all
+
+# Stop everything cleanly; the runtime releases every disabled device first.
+stop-all:
+    {{tasks}} stop-all
+
+# Show which components are running.
+status:
+    {{tasks}} status
+
+# Load 200 synthetic incidents through the API.
+seed-demo *args:
+    {{tasks}} seed-demo {{args}}
+
+# Re-enable every device Continuum disabled (elevated prompt required).
+release-all:
+    {{tasks}} release-all
+
+# Regenerate docs/EVALUATION.md.
+evaluate *args:
+    {{tasks}} evaluate {{args}}

@@ -330,7 +330,7 @@ def _incident_detail(client: ConnectorClient, incident: dict, runtime_running: b
                     f"{incident['threshold']:.3f}",
                 ),
                 ("Action taken", incident["action_taken"].replace("_", " ")),
-                ("Time to detect", f"{incident['time_to_detect_ms']} ms"),
+                *helpers.detection_timing_rows(incident),
                 ("MITRE ATT&CK", incident["mitre_technique"]),
                 ("Recommended follow-ups", followups or "none"),
             ]

@@ -1,97 +1,325 @@
 # Continuum
 
-Continuum is a closed-loop cybersecurity pipeline for Windows 10/11, built
-as a college software engineering project. It detects keystroke-injection
-attacks from HID-emulating devices (USB Rubber Ducky, Digispark, Bash
-Bunny and similar), responds by locking the workstation and disabling the
-offending device, records every response as a structured incident, and
-lets an analyst ask incident-response questions against that incident
-history through a local retrieval-augmented assistant.
+**A closed-loop defence against keystroke-injection attacks on Windows: detect the attack,
+contain the device, record the incident, and answer questions about it.**
 
-Design rules this project follows: no key identity is ever captured or
-logged, capture is isolated from analysis, everything runs locally with
-no cloud calls or telemetry, every incident is schema-validated, the
-connector API always requires a bearer token, "I don't know" is a valid
-answer from IncidentRAG, and there are hard safety rails around blocking
-a device.
+![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB)
+![Platform Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)
+![Runs fully offline](https://img.shields.io/badge/runs-fully%20local-346538)
 
-## Status
+Devices such as the USB Rubber Ducky, Digispark and Bash Bunny pretend to be a keyboard and
+type a pre-recorded attack faster than any person. Windows trusts them like any other
+keyboard. Continuum watches the typing rhythm of every physical keyboard, and when one stops
+looking human it:
 
-Capture, detection, response, the connector API, IncidentRAG and the
-Streamlit dashboard are implemented and covered by tests. Hardware trial
-results are recorded in `docs/hardware_results.md`.
+1. **locks the workstation and disables that one device** (HID Firewall),
+2. **records a structured, validated incident** (Connector API), and
+3. **lets an analyst ask what happened and what to do next**, answered only from the
+   incident history and response playbooks, with citations, or an explicit "not enough
+   evidence" when the records do not support an answer (IncidentRAG).
 
-## Components
+Everything runs on the local machine: no cloud services, no telemetry, and a local LLM.
+Continuum never records which keys were pressed, only their timing.
 
-- **HID Firewall** (`src/continuum/capture`, `detection`, `response`):
-  reads raw keyboard input via the Windows Raw Input API, scores typing
-  cadence per physical device with scikit-learn, and on a confirmed
-  anomaly locks the workstation and disables the device, subject to
-  safety rails (never the last keyboard, never an allowlisted device,
-  always auto-release, always a one-command release-everything).
-- **Connector** (`src/continuum/connector`): a local FastAPI service,
-  bearer-token protected even on localhost, that turns every block or
-  release into a structured, schema-validated incident record in SQLite.
-- **IncidentRAG** (`src/continuum/rag`): embeds incidents with
-  sentence-transformers, stores them in ChromaDB, retrieves relevant
-  incidents for a question, gates the answer on retrieval confidence, and
-  generates a cited answer with a local Ollama model. Refuses to answer
-  when evidence is weak.
-- **Dashboard** (`src/continuum/dashboard`): a Streamlit app for watching
-  device status, browsing incidents, releasing a blocked device, and
-  asking IncidentRAG questions.
+Built as a college software engineering project.
+
+## How it works
+
+```mermaid
+flowchart LR
+    KB[Keyboards] -->|Raw Input| CAP[Capture Layer]
+    subgraph RT[Runtime, elevated]
+        CAP -->|timing events| CAE[Cadence Analysis Engine]
+        CAE -->|blocked verdict| BAH[Block and Alert Handler]
+    end
+    BAH -->|lock + pnputil disable| WIN[Windows]
+    BAH -->|POST /incidents| API[Connector API<br/>FastAPI + SQLite]
+    API -->|ingest queue| RAG[Retrieval Engine<br/>ChromaDB + BM25]
+    RAG --> CS[Confidence Scorer]
+    RAG <--> LLM[Ollama<br/>127.0.0.1]
+    DASH[Streamlit Dashboard] -->|bearer token| API
+```
+
+- **Capture Layer:** Windows Raw Input, which, unlike a keyboard hook, reports *which*
+  physical device sent each keystroke. Only timestamps, up/down and a device id leave this
+  layer.
+- **Cadence Analysis Engine:** 17 timing features over sliding 30-keystroke windows,
+  scored by an Isolation Forest trained on your own typing, with a two-window debounce.
+- **Block and Alert Handler:** lock first, then disable the device with `pnputil`, verify
+  it worked, show a notification, and send the incident. Safety rails apply throughout (see
+  [Security design](#security-design)).
+- **Connector API:** a local FastAPI service, with bearer-token authentication even on
+  localhost, that validates and stores every incident.
+- **Retrieval Engine and Confidence Scorer:** hybrid retrieval over incidents and playbooks,
+  a cited answer from a local model, and a confidence gate that refuses when the evidence is
+  weak.
+- **Dashboard:** live device status, incidents, Ask IncidentRAG, calibration and settings.
+
+More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Results at a glance
+
+From [docs/EVALUATION.md](docs/EVALUATION.md), regenerated by `.\tasks.ps1 evaluate`. The
+detector figures there come from simulated typing until you record your own baseline.
+
+| | Result |
+| --- | --- |
+| Burst and slowed injection, window-level recall | 1.00 |
+| Randomized (human-paced) injection, window-level recall | 0.04, effectively missed |
+| First injected keystroke to device blocked | about 270 ms, at the 40th keystroke |
+| Incident retrievable by IncidentRAG | about 3 s after the first keystroke |
+| IncidentRAG retrieval hit rate at 5 (30 questions) | 0.97 |
+| Off-topic questions refused | 10 of 10 |
 
 ## Requirements
 
-- Windows 10 or 11.
-- Python 3.12.
-- [Ollama](https://ollama.com) running locally for IncidentRAG.
-- An elevated (Administrator) terminal to run the capture/response
-  runtime, because `pnputil` device enable/disable requires it.
+- Windows 10 or 11, 64-bit, with an account that can approve an administrator (UAC)
+  prompt.
+- About 6 GB of free disk space (Python packages, the embedding model and the local LLM).
+- 8 GB of RAM or more, for the local LLM.
+- For the hardware demo: a Digispark ATtiny85 board and a second keyboard. A laptop's
+  built-in keyboard counts.
 
-## Setup
+## Installation
 
-With [`just`](https://github.com/casey/just) installed:
+### 1. Install the tools
 
+| Tool | Get it | Notes |
+| --- | --- | --- |
+| Python 3.12 (64-bit) | [python.org/downloads/windows](https://www.python.org/downloads/windows/) | Tick **Add python.exe to PATH**. Check with `py -3.12 --version`. |
+| Git | [git-scm.com/download/win](https://git-scm.com/download/win) | Default options are fine. |
+| Ollama | [ollama.com/download](https://ollama.com/download) | Runs in the system tray and starts at logon. |
+| Arduino IDE 2.x | [arduino.cc/en/software](https://www.arduino.cc/en/software) | Only needed to flash the Digispark. |
+
+Then download the local model IncidentRAG uses, about 4.9 GB:
+
+```powershell
+ollama pull llama3.1:8b
 ```
-just setup
-```
 
-Without `just`, from PowerShell:
+### 2. Get the code and set it up
 
-```
+In PowerShell:
+
+```powershell
+git clone https://github.com/PR0XCITY/Continuum.git
+cd Continuum
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned   # once per user, if scripts are blocked
 .\tasks.ps1 setup
 ```
 
-Both create a `.venv` and install the pinned requirements from
-`pyproject.toml`.
+`setup` does the following:
 
-Copy `.env.example` to `.env` and fill in a real bearer token before
-running the connector API.
+- creates `.venv` with Python 3.12 and installs the pinned dependencies,
+- creates `.env` with a new random API token (an existing `.env` is never touched),
+- downloads the embedding model once, so everything after this runs offline,
+- checks that Ollama and the model are installed.
+
+If Python 3.12 is installed somewhere `py` does not find (a conda environment, for example),
+set `$env:CONTINUUM_PYTHON` to that `python.exe` before running setup.
+
+[`just`](https://github.com/casey/just) users can type `just setup`, `just run-all` and so
+on instead: every `just` recipe calls the matching `tasks.ps1` target.
+
+### 3. Teach it your typing
+
+Continuum learns what normal typing looks like on your keyboard. Record two or three
+sessions of about 3 minutes each, typing your own text, at least one of them deliberately
+fast. Then train:
+
+```powershell
+.\tasks.ps1 record-baseline     # repeat 2 or 3 times
+.\tasks.ps1 train-model
+```
+
+Only timing statistics are saved, to `data\baselines\<you>.npz`. The text you type is
+never read.
+
+### 4. Check everything works
+
+```powershell
+.\tasks.ps1 test    # about 470 tests; every Windows call is mocked
+.\tasks.ps1 lint
+```
 
 ## Running
 
-```
-just test              # pytest, all Win32 calls mocked
-just lint               # ruff check
-just run-runtime        # capture + detection + response loop, elevated
-just run-api            # FastAPI connector
-just run-dashboard      # Streamlit dashboard
-just run-all            # api + dashboard together
+```powershell
+.\tasks.ps1 run-all     # API, dashboard and the elevated runtime, each in its own window
+.\tasks.ps1 status      # which components are running
+.\tasks.ps1 stop-all    # stops everything cleanly; disabled devices are released first
 ```
 
-Or the PowerShell equivalents: `.\tasks.ps1 test`, `.\tasks.ps1 lint`,
-`.\tasks.ps1 run-runtime`, `.\tasks.ps1 run-api`,
-`.\tasks.ps1 run-dashboard`, `.\tasks.ps1 run-all`.
+`run-all` opens three titled windows, Continuum api, Continuum dashboard and Continuum
+runtime. The runtime window needs your approval at the Windows administrator prompt, because
+disabling a device requires it. Each window's output is also saved to
+`data\logs\<component>.log`.
+
+| Component | Address | Run it on its own |
+| --- | --- | --- |
+| Dashboard | http://127.0.0.1:8501 | `.\tasks.ps1 run-dashboard` |
+| Connector API, with interactive docs | http://127.0.0.1:8731/docs | `.\tasks.ps1 run-api` |
+| HID Firewall runtime | (no UI; its window shows its log) | `.\tasks.ps1 run-runtime` from an Administrator PowerShell |
+
+Other commands:
+
+| Command | What it does |
+| --- | --- |
+| `.\tasks.ps1 seed-demo` | Loads 200 synthetic incidents through the API, so the dashboard and IncidentRAG have history to work with. The API must be running. |
+| `.\tasks.ps1 release-all` | The kill switch: re-enables every device Continuum disabled. Run it from an Administrator PowerShell. |
+| `.\tasks.ps1 evaluate` | Reruns every measurement and regenerates `docs/EVALUATION.md`. |
+
+To start Continuum automatically at logon, see [docs/AUTOSTART.md](docs/AUTOSTART.md). It is
+not enabled by default.
+
+## Flashing the Digispark test payloads
+
+The four sketches in [`tools/attacks/`](tools/attacks/) only ever type the harmless phrase
+"continuum test payload". They never open a shell, never press Win, Ctrl or Alt, and type
+once, then stop.
+
+1. In Arduino IDE, add the Digistump board index under **File > Preferences > Additional
+   boards manager URLs**, then install **Digistump AVR Boards**.
+2. Run `Install Digistump Drivers.bat` as Administrator. It comes with that package; the
+   exact path is in the attacks README.
+3. Open a sketch, for example `tools/attacks/burst/burst.ino`, select **Digispark (Default -
+   16.5mhz)**, click **Upload**, and plug the board in when prompted.
+
+[tools/attacks/README.md](tools/attacks/README.md) has the board index address, driver
+troubleshooting and the safe test procedure.
+
+## Demo
+
+[docs/DEMO.md](docs/DEMO.md) is a five-minute script with exact commands and expected
+results. It covers:
+
+1. normal typing being left alone,
+2. a burst attack locking the screen and disabling the device,
+3. the incident in the dashboard,
+4. IncidentRAG answering with citations,
+5. IncidentRAG refusing an off-topic question,
+6. the evasion case it misses,
+7. releasing everything.
 
 ## Configuration
 
-Defaults live in `config/default.yaml`: detection window size and
-thresholds, debounce, response mode, auto-release timeout, API port,
-Ollama model name, ChromaDB path, and the device allowlist. Override with
-environment variables or a local YAML file as described in
-`src/continuum/common/config.py`.
+Defaults live in [`config/default.yaml`](config/default.yaml). Override them per machine in
+`config/local.yaml` (gitignored; the dashboard's Settings page writes it), or with
+environment variables shaped `CONTINUUM_<SECTION>__<FIELD>` (for example
+`CONTINUUM_RESPONSE__MODE=alert_only`). The precedence, from highest, is environment, then
+`local.yaml`, then `default.yaml`. The runtime reads its settings at startup, so restart it
+after a change.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `detection.sensitivity` | `5` | 1 (fewest alerts) to 10 (most). 5 uses the model's calibrated threshold unchanged; each step moves it by 0.01. |
+| `response.mode` | `lock_and_disable` | `alert_only`, `lock_only` or `lock_and_disable`. Without elevation the runtime falls back to `lock_only`. |
+| `response.dry_run` | `false` | Log every decision but never lock or disable anything. |
+| `response.allowlist` | `[]` | Device instance ids that are never disabled, such as a barcode scanner. |
+| `response.auto_release_timeout_seconds` | `600` | Every disabled device is re-enabled after this long. |
+| `response.allow_non_usb_disable` | `false` | Allow disabling non-USB (for example built-in PS/2) keyboards. |
+| `connector.host`, `connector.port` | `127.0.0.1`, `8731` | Where the API listens. |
+| `connector.database_path` | `data/db/continuum.sqlite3` | The incident database. |
+| `connector.auth_token_env_var` | `CONTINUUM_API_TOKEN` | Which environment variable (or `.env` entry) holds the bearer token. |
+| `rag.ollama_host`, `rag.ollama_model` | `http://127.0.0.1:11434`, `llama3.1:8b` | The local LLM. |
+| `rag.ollama_temperature`, `rag.ollama_timeout_seconds` | `0.1`, `30` | Generation settings. |
+| `rag.embedding_model` | `all-MiniLM-L6-v2` | The sentence-transformers model for retrieval. |
+| `rag.chroma_path`, `rag.chroma_collection` | `data/chroma`, `continuum_incidents` | The vector store. |
+| `rag.corpus_path` | `data/corpus` | The playbooks IncidentRAG may cite. |
+| `rag.top_k` | `5` | Chunks given to the model as context. |
+| `rag.min_similarity` | `0.45` | The similarity floor used by the confidence gate. |
+| `rag.confidence_threshold` | `0.5` | Below this, IncidentRAG refuses to answer. |
+| `rag.chunk_size_tokens`, `rag.chunk_overlap_tokens` | `300`, `50` | Chunking, in words. |
+| `dashboard.host`, `dashboard.port` | `127.0.0.1`, `8501` | Where the dashboard listens. |
+| `logging.level`, `logging.directory` | `INFO`, `data/logs` | Runtime logging. |
+
+`detection.window_size`, `detection.debounce_ms`, `detection.anomaly_threshold` and
+`detection.debounce_windows` are present in the schema but not read by the current
+detector. It uses 30-keystroke windows, a two-window debounce and the trained model's own
+calibrated threshold; use `sensitivity` to tune it.
+
+## Security design
+
+- **Never a keylogger.** No code path records which key was pressed. Only timestamps,
+  up/down, a press counter and a device id leave the capture layer. Baselines store window
+  statistics, never text.
+- **Raw Input, not hooks.** Only Raw Input identifies the physical device, so Continuum can
+  disable the attacking device and leave yours working.
+- **Least privilege.** Only the runtime is elevated, because disabling devices needs it. The
+  API and dashboard run as a normal user, and the elevated process never runs a web server.
+- **Safety rails that no setting can turn off.** Continuum never disables:
+  - the last enabled keyboard,
+  - an allowlisted device,
+  - a non-USB keyboard (unless configured).
+
+  Every disabled device is re-enabled after a timeout, `--release-all` releases everything
+  at once, and the runtime releases everything when it starts and stops. Rules are checked
+  in pure code before `pnputil` runs, and results are verified rather than assumed.
+- **Lock before anything else.** Anything an attack types after the lock goes to the lock
+  screen.
+- **Authentication everywhere.**
+  - Every API route except `/health` needs the bearer token, even from localhost.
+  - The token is compared in constant time.
+  - The API refuses every request if no token is set.
+  - Request bodies are size-limited and requests rate-limited.
+- **Validated data only.** Incidents are schema-validated with unknown fields rejected,
+  notes are sanitised, and only a fixed-template document of validated fields ever enters
+  the RAG corpus. Prompt-injection phrasing in notes is flagged and always passed to the
+  model as quoted data, never as instructions.
+- **Honest answers.** IncidentRAG cites numbered sources, checks every citation, and refuses
+  ("insufficient evidence") rather than guessing.
+- **Local only.** The API and dashboard bind to `127.0.0.1`, the LLM is local, and ChromaDB
+  and Streamlit telemetry are switched off. Untrusted text is HTML-escaped in the dashboard,
+  so it cannot load remote content.
+
+## Known limitations
+
+Measured in [docs/EVALUATION.md](docs/EVALUATION.md):
+
+- **Human-paced attacks get through.** An injection that randomises its timing to look
+  human is detected in only about 4 percent of windows. Catching it would need signals
+  beyond typing rhythm.
+- **Some keystrokes always land.** Raw Input can observe keystrokes but not hold them back,
+  and blocking needs two 30-keystroke windows, so an attack's first 40 keystrokes always
+  reach the focused window. A payload shorter than 40 keystrokes is never detected.
+- **A small baseline means false positives.** Typing much faster than anything in your
+  baseline can be blocked. Include a fast session when recording.
+- **The Digispark's bootloader delay is excluded.** It waits about 5 seconds after plug-in
+  before typing, so plug-in to lock takes longer than the measured first-keystroke-to-lock
+  time.
+- **IncidentRAG can be over-cautious.** It sometimes refuses questions the corpus does
+  answer; the confidence threshold may need tuning for your data.
+
+## Project layout
+
+```
+config/            default configuration (local.yaml overrides are gitignored)
+data/corpus/       response playbooks IncidentRAG may cite
+data/eval/         IncidentRAG evaluation questions
+docs/              architecture, demo script, evaluation report, autostart guide
+src/continuum/
+  capture/         Raw Input capture (Capture Layer)
+  detection/       features, baseline, model, scorer (Cadence Analysis Engine)
+  response/        lock, device disable/enable, alerts (Block and Alert Handler)
+  runtime.py       the elevated main loop tying the three together
+  connector/       FastAPI service and SQLite (Connector API)
+  rag/             ingest, retrieval, answers, confidence gate (IncidentRAG)
+  dashboard/       Streamlit dashboard
+tools/             baseline recording, training, evaluation, simulators, Digispark sketches
+tests/             pytest suite, including an end-to-end integration test
+tasks.ps1          every command (justfile mirrors it)
+```
+
+## Documentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): module responsibilities and data flow.
+- [docs/DEMO.md](docs/DEMO.md): the five-minute demo script.
+- [docs/EVALUATION.md](docs/EVALUATION.md): every measured result, with limitations.
+- [docs/AUTOSTART.md](docs/AUTOSTART.md): optional start at logon with Task Scheduler.
+- [tools/attacks/README.md](tools/attacks/README.md): flashing and safely running the test
+  payloads.
+- [docs/windows_notes.md](docs/windows_notes.md): Windows-specific capture behaviour.
 
 ## License
 
-Not yet decided.
+No license has been chosen yet; all rights are reserved by the author.

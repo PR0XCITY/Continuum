@@ -13,6 +13,8 @@ from typing import Any
 
 import pandas as pd
 
+from continuum.common.schemas import TRIAL_MS_TO_BLOCK, TRIAL_MS_TO_LOCK, TRIAL_PRESSES_TO_BLOCK
+
 ROLLING_WINDOW_SECONDS = 60
 INTERVAL_FEATURE = "flight_mean_ms"
 
@@ -263,6 +265,27 @@ def daily_counts(
             rows.append({"day": pd.Timestamp(day), "verdict": verdict, "count": count})
         day += timedelta(days=1)
     return pd.DataFrame(rows, columns=["day", "verdict", "count"])
+
+
+def detection_timing_rows(incident: dict[str, Any]) -> list[tuple[str, str]]:
+    """Time-to-detect rows for the incident detail panel.
+
+    Incidents recorded by the current runtime also carry timings from the
+    device's first key press; older or imported ones only have the
+    suspicious-to-blocked figure.
+    """
+    summary = incident.get("features_summary") or {}
+    rows: list[tuple[str, str]] = []
+    if TRIAL_MS_TO_BLOCK in summary:
+        presses = summary.get(TRIAL_PRESSES_TO_BLOCK)
+        presses_text = f", {presses:.0f} key presses" if presses is not None else ""
+        rows.append(
+            ("First keystroke to block", f"{summary[TRIAL_MS_TO_BLOCK]:.0f} ms{presses_text}")
+        )
+    if TRIAL_MS_TO_LOCK in summary:
+        rows.append(("First keystroke to lock", f"{summary[TRIAL_MS_TO_LOCK]:.0f} ms"))
+    rows.append(("Suspicious to blocked", f"{incident['time_to_detect_ms']} ms"))
+    return rows
 
 
 def question_about_incident(incident: dict[str, Any]) -> str:

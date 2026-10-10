@@ -493,6 +493,18 @@ def test_trial_timing_summary_without_a_lock_omits_the_lock_figure():
     assert runtime.TRIAL_MS_TO_LOCK not in summary
 
 
+def test_consume_stop_request_removes_the_file_once(tmp_path):
+    path = tmp_path / "run" / "runtime.stop"
+    assert runtime.consume_stop_request(path) is False
+
+    path.parent.mkdir()
+    path.write_text("", encoding="utf-8")
+
+    assert runtime.consume_stop_request(path) is True
+    assert not path.exists()
+    assert runtime.consume_stop_request(path) is False
+
+
 def test_trial_timing_summary_is_empty_without_a_first_press():
     event = human_like_events(DEVICE_ID, 1, rng=np.random.default_rng(4))[0]
 

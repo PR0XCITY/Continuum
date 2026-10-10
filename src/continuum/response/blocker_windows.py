@@ -445,6 +445,27 @@ class DeviceBlocker:
                 released.append(requested_id)
         return released
 
+    def forget_released_elsewhere(self) -> list[str]:
+        """Drop records another process has already released, such as --release-all.
+
+        A record is dropped only when it is missing from the file on disk
+        AND its device is confirmed enabled again (or no longer present).
+        If the file merely lost an entry while the device is still
+        disabled, the record is kept, so the auto-release safety net
+        always still covers it.
+        """
+        on_disk = {record.requested_instance_id for record in load_disabled_devices(self._path)}
+        forgotten = []
+        for requested_id, record in list(self._records.items()):
+            if requested_id in on_disk:
+                continue
+            if is_devnode_started(record.disabled_instance_id) is not False:
+                del self._records[requested_id]
+                forgotten.append(requested_id)
+        if forgotten:
+            _logger.info("released by another process: %s", ", ".join(forgotten))
+        return forgotten
+
     def check_auto_release(self, *, now: datetime | None = None) -> list[str]:
         """Re-enable any device whose auto-release timeout has passed."""
         current = now if now is not None else datetime.now(UTC)
