@@ -31,10 +31,16 @@ Modules:
     evaluate_model.py     Evaluates a trained model against simulated
                          attacks and held-out human windows; writes
                          docs/eval_results.md and an ROC plot.
-    run_hardware_trial.py Watches the incident outbox while the real
-                         runtime is running against real Digispark
-                         hardware, and records detection timing to
+    run_hardware_trial.py Watches for new incidents (connector API, or the
+                         outbox when the connector is down) during real
+                         Digispark runs and records detection, timing
+                         and characters landed to
                          docs/hardware_trial_results.csv.
+    evaluate_all.py       Runs every evaluation (simulated attacks,
+                         ablation, false positives, hardware trials,
+                         IncidentRAG, end to end) and regenerates
+                         docs/EVALUATION.md and docs/figures/.
+    evaluation/           The modules evaluate_all.py is built from.
     attacks/              Harmless Digispark test payloads (one sketch
                          per cadence profile) and their own README for
                          building, flashing and safely running them.

@@ -15,7 +15,13 @@
 #include <DigiKeyboard.h>
 #include <string.h>
 
-const char *PAYLOAD = "continuum test payload";
+// The harmless phrase six times (137 characters). Continuum needs 30
+// key presses to form one detection window and two flagged windows to
+// block, so it can never react to anything shorter than 40 presses; a
+// single 22-character phrase would end before detection could start.
+const char *PAYLOAD =
+    "continuum test payload continuum test payload continuum test payload "
+    "continuum test payload continuum test payload continuum test payload";
 
 // Measured from the start of setup(), after the bootloader's own
 // separate wait has already elapsed. Gives plenty of time to focus

@@ -460,8 +460,43 @@ def test_process_event_on_blocked_verdict_locks_then_queues_an_incident(tmp_path
     assert len(outbox) >= 1
     assert blocker.is_disabled(device.instance_id) is True
 
+    # With every window flagged, the block lands on the second window: 30
+    # presses for the first window plus a 10-press step for the second.
+    _, incident, _ = outbox.due_entries(now=datetime.now(UTC))[0]
+    summary = incident.features_summary
+    assert summary[runtime.TRIAL_PRESSES_TO_BLOCK] == 40.0
+    expected_ms = (events_by_press(events)[39] - events_by_press(events)[0]) / 1_000_000
+    assert summary[runtime.TRIAL_MS_TO_BLOCK] == pytest.approx(expected_ms, abs=0.01)
+    assert summary[runtime.TRIAL_MS_TO_LOCK] >= summary[runtime.TRIAL_MS_TO_BLOCK]
+    assert summary[runtime.TRIAL_MS_TO_RESPONSE] >= summary[runtime.TRIAL_MS_TO_LOCK]
+
     client.close()
     outbox.close()
+
+
+def events_by_press(events):
+    """Timestamps of non-repeat key-downs, in order."""
+    return [e.timestamp_ns for e in events if e.event_type == "down" and not e.is_repeat]
+
+
+def test_trial_timing_summary_without_a_lock_omits_the_lock_figure():
+    buffer = runtime._DeviceBuffer(first_press_ns=1_000_000, presses_seen=45)
+    event = human_like_events(DEVICE_ID, 1, rng=np.random.default_rng(3))[0].model_copy(
+        update={"timestamp_ns": 501_000_000}
+    )
+
+    summary = runtime.trial_timing_summary(buffer, event, {"response_done_ms": 2.0})
+
+    assert summary[runtime.TRIAL_PRESSES_TO_BLOCK] == 45.0
+    assert summary[runtime.TRIAL_MS_TO_BLOCK] == pytest.approx(500.0)
+    assert summary[runtime.TRIAL_MS_TO_RESPONSE] == pytest.approx(502.0)
+    assert runtime.TRIAL_MS_TO_LOCK not in summary
+
+
+def test_trial_timing_summary_is_empty_without_a_first_press():
+    event = human_like_events(DEVICE_ID, 1, rng=np.random.default_rng(4))[0]
+
+    assert runtime.trial_timing_summary(runtime._DeviceBuffer(), event, {}) == {}
 
 
 def test_process_event_normal_verdict_does_nothing_harmful(tmp_path, monkeypatch):

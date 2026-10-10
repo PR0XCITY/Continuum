@@ -21,7 +21,13 @@
 
 #include <DigiKeyboard.h>
 
-const char *PAYLOAD = "continuum test payload";
+// The harmless phrase six times (137 characters). Continuum needs 30
+// key presses to form one detection window and two flagged windows to
+// block, so it can never react to anything shorter than 40 presses; a
+// single 22-character phrase would end before detection could start.
+const char *PAYLOAD =
+    "continuum test payload continuum test payload continuum test payload "
+    "continuum test payload continuum test payload continuum test payload";
 
 // Extra pause, on top of the Digispark bootloader's own startup wait
 // (about 5 seconds), before typing starts. Gives time to focus Notepad.

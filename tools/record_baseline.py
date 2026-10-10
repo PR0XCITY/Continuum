@@ -16,7 +16,10 @@ data/baselines/<user>.npz.
 Usage:
     python tools/record_baseline.py [user]
 
-user defaults to your OS account name if not given.
+user defaults to your OS account name if not given. For the false
+positive study in docs/EVALUATION.md, also record one deliberately fast
+typing session under the name "<user>_fast"; tools/evaluate_all.py
+replays it against the model trained on your normal baseline.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ import getpass
 import queue
 import sys
 import time
+from datetime import UTC, datetime, timedelta
 
 from continuum.capture.factory import create_capture_source
 from continuum.common.schemas import DeviceInfo, KeyEvent
@@ -108,8 +112,24 @@ def main() -> None:
         )
         return
 
+    # One wall-clock time per window, from each window's offset on the
+    # capture clock, so a later replay (tools/evaluate_all.py's false
+    # positive study) sees real spacing between windows.
+    sitting_end = datetime.now(UTC)
+    last_ns = events[-1].timestamp_ns
+    captured_at = [
+        sitting_end - timedelta(microseconds=(last_ns - window.window_start_ns) / 1000)
+        for window in windows
+    ]
+
     path = baseline_path(user)
-    baseline = append_feature_windows(path, user=user, device_id=device.device_id, windows=windows)
+    baseline = append_feature_windows(
+        path,
+        user=user,
+        device_id=device.device_id,
+        windows=windows,
+        captured_at=captured_at,
+    )
 
     print(f"Saved {len(windows)} windows from this sitting to {path}")
     print_quality_report(baseline)

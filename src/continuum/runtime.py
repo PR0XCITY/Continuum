@@ -93,6 +93,10 @@ logger = get_logger("runtime")
 class _DeviceBuffer:
     events: list[KeyEvent] = field(default_factory=list)
     n_windows_emitted: int = 0
+    # Since this device's first key press (or its last block): counts and
+    # clock readings only, for the timing figures recorded on an incident.
+    first_press_ns: int | None = None
+    presses_seen: int = 0
 
 
 def _trim_buffer_if_needed(buffer: _DeviceBuffer, device_id: str) -> None:
@@ -130,6 +134,7 @@ def build_incident(
     *,
     action_taken: ActionTaken,
     time_to_detect_ms: int,
+    trial_timings: dict[str, float] | None = None,
 ) -> IncidentRecord:
     pattern = classify_attack_pattern(result.window.features)
 
@@ -152,6 +157,8 @@ def build_incident(
     # figure: the number of events in the window that triggered the block.
     features_summary = dict(result.window.features)
     features_summary["window_n_events"] = float(result.window.n_events)
+    # Measured from this device's first key press: see trial_timing_summary.
+    features_summary.update(trial_timings or {})
 
     return IncidentRecord(
         detected_at=datetime.now(UTC),
@@ -190,13 +197,21 @@ def respond_to_block(
     blocker: DeviceBlocker,
     allowlist: list[str],
     other_enabled_keyboard_count_value: int,
+    timings: dict[str, float] | None = None,
 ) -> ActionTaken:
-    """Lock first, then disable. Speed matters more than anything else here."""
+    """Lock first, then disable. Speed matters more than anything else here.
+
+    If timings is given, the wall time spent locking and disabling, in
+    milliseconds from the start of this call, is written into it.
+    """
     locked = False
     disabled = False
+    started = time.perf_counter()
 
     if effective_mode in ("lock_only", "lock_and_disable"):
         locked = lock_workstation()
+        if timings is not None:
+            timings["lock_done_ms"] = (time.perf_counter() - started) * 1000
 
     if effective_mode == "lock_and_disable":
         block_result = blocker.disable(
@@ -207,6 +222,9 @@ def respond_to_block(
             reason=f"anomaly_score={result.anomaly_score:.3f} threshold={result.threshold:.3f}",
         )
         disabled = block_result.success
+
+    if timings is not None:
+        timings["response_done_ms"] = (time.perf_counter() - started) * 1000
 
     if locked and disabled:
         return ActionTaken.LOCKED_AND_DISABLED
@@ -520,6 +538,37 @@ def write_runtime_status(
         conn.close()
 
 
+TRIAL_PRESSES_TO_BLOCK = "trial_presses_to_block"
+TRIAL_MS_TO_BLOCK = "trial_ms_first_press_to_block"
+TRIAL_MS_TO_LOCK = "trial_ms_first_press_to_lock"
+TRIAL_MS_TO_RESPONSE = "trial_ms_first_press_to_response_done"
+
+
+def trial_timing_summary(
+    buffer: _DeviceBuffer, blocking_event: KeyEvent, response_timings: dict[str, float]
+) -> dict[str, float]:
+    """Timing figures for hardware trials, measured from the device's first press.
+
+    The first press and the blocking event share the capture clock, so
+    the block figure excludes any queueing delay before this process saw
+    the event; lock and response figures add the measured wall time of
+    respond_to_block on top. Lock is omitted when no lock was attempted.
+    """
+    if buffer.first_press_ns is None:
+        return {}
+    ms_to_block = (blocking_event.timestamp_ns - buffer.first_press_ns) / 1_000_000
+    summary = {
+        TRIAL_PRESSES_TO_BLOCK: float(buffer.presses_seen),
+        TRIAL_MS_TO_BLOCK: round(ms_to_block, 3),
+        TRIAL_MS_TO_RESPONSE: round(
+            ms_to_block + response_timings.get("response_done_ms", 0.0), 3
+        ),
+    }
+    if "lock_done_ms" in response_timings:
+        summary[TRIAL_MS_TO_LOCK] = round(ms_to_block + response_timings["lock_done_ms"], 3)
+    return summary
+
+
 # --- the main loop ---------------------------------------------------------
 
 
@@ -541,6 +590,10 @@ def process_event(
 ) -> None:
     buffer = device_buffers.setdefault(event.device_id, _DeviceBuffer())
     buffer.events.append(event)
+    if event.event_type == "down" and not event.is_repeat:
+        if buffer.first_press_ns is None:
+            buffer.first_press_ns = event.timestamp_ns
+        buffer.presses_seen += 1
     _trim_buffer_if_needed(buffer, event.device_id)
 
     windows = list(
@@ -581,6 +634,7 @@ def process_event(
             )
             continue
 
+        response_timings: dict[str, float] = {}
         action_taken = respond_to_block(
             device,
             result,
@@ -590,13 +644,22 @@ def process_event(
             other_enabled_keyboard_count_value=other_enabled_keyboard_count(
                 capture, blocker, event.device_id
             ),
+            timings=response_timings,
         )
 
         started_at = pending_since.pop(event.device_id, datetime.now(UTC))
         time_to_detect_ms = int((datetime.now(UTC) - started_at).total_seconds() * 1000)
 
+        trial_timings = trial_timing_summary(buffer, event, response_timings)
+        buffer.first_press_ns = None
+        buffer.presses_seen = 0
+
         incident = build_incident(
-            result, device, action_taken=action_taken, time_to_detect_ms=time_to_detect_ms
+            result,
+            device,
+            action_taken=action_taken,
+            time_to_detect_ms=time_to_detect_ms,
+            trial_timings=trial_timings,
         )
 
         notify(

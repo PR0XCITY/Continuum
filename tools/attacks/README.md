@@ -12,9 +12,12 @@ detection model is evaluated against in `docs/eval_results.md`:
 
 ## These are harmless on purpose
 
-Every sketch types exactly one fixed string, `"continuum test
-payload"`, into whatever window currently has focus, once, and then
-idles forever. None of them:
+Every sketch types exactly one fixed string, the phrase `"continuum test
+payload"` six times over (137 characters), into whatever window
+currently has focus, once, and then idles forever. The repetition is
+needed: Continuum cannot block anything shorter than 40 key presses
+(a 30-press detection window plus a second window for debounce). None
+of them:
 
 - open a shell, a Run dialog, or any other program,
 - download, execute, exfiltrate or modify anything,

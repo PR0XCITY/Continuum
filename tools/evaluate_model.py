@@ -138,13 +138,14 @@ def _attack_windows_and_labels(
     n_streams: int,
     window_size: int,
     window_step: int,
+    seed_base: int = SEED_BASE,
 ) -> tuple[list, list[int]]:
     windows: list = []
     labels: list[int] = []
     offset = ATTACK_TYPE_SEED_OFFSETS[attack_type]
 
     for i in range(n_streams):
-        seed = SEED_BASE + offset + i
+        seed = seed_base + offset + i
 
         if attack_type == "hybrid":
             events = generate_hybrid(

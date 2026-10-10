@@ -3,6 +3,17 @@
 This folder holds design notes and operator documentation that are too
 long for the top-level README.md.
 
+Current contents:
+
+- `EVALUATION.md` and `figures/`: every measured result for the HID
+  Firewall, IncidentRAG and the end-to-end path, with a Limitations
+  section. Generated; regenerate with `python tools/evaluate_all.py`
+  rather than editing by hand.
+- `eval_results.md`: the single-model evaluation from
+  `tools/evaluate_model.py`, shown on the dashboard's calibration page.
+- `hardware_results.md`: a template for notes during Digispark trials.
+- `windows_notes.md`: Windows-specific behaviour of the capture layer.
+
 Suggested contents as the project grows:
 
 - `architecture.md`: data flow from capture through detection, response,

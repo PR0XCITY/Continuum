@@ -1,8 +1,7 @@
 """Tests for tools/run_hardware_trial.py.
 
-Exercises the pure CSV and outbox-reading pieces directly; the
-interactive input() loop in main() is not covered here the same way
-tools/record_baseline.py's is not, it is a thin wrapper around these.
+Exercises the pure CSV, polling and parsing pieces directly; the
+interactive input() loop in main() is a thin wrapper around these.
 """
 
 from __future__ import annotations
@@ -11,14 +10,25 @@ import csv
 import json
 import sqlite3
 
-import tools.run_hardware_trial as hardware_trial_module
+import httpx
+import pytest
 from tools.run_hardware_trial import (
     CSV_FIELDS,
+    PAYLOAD_CHARS,
     append_row,
     ensure_csv_header,
     incident_to_row,
+    parse_chars_landed,
+    read_connector_incidents,
     read_outbox_incidents,
     wait_for_new_incident,
+)
+
+from continuum.runtime import (
+    TRIAL_MS_TO_BLOCK,
+    TRIAL_MS_TO_LOCK,
+    TRIAL_MS_TO_RESPONSE,
+    TRIAL_PRESSES_TO_BLOCK,
 )
 
 SAMPLE_INCIDENT = {
@@ -38,30 +48,20 @@ SAMPLE_INCIDENT = {
     "threshold": 1.0,
     "verdict": "blocked",
     "attack_pattern": "burst_injection",
-    "features_summary": {"burst_score": 1.0, "window_n_events": 30.0},
+    "features_summary": {
+        "burst_score": 1.0,
+        "window_n_events": 30.0,
+        TRIAL_PRESSES_TO_BLOCK: 40.0,
+        TRIAL_MS_TO_BLOCK: 212.5,
+        TRIAL_MS_TO_LOCK: 230.0,
+        TRIAL_MS_TO_RESPONSE: 410.0,
+    },
     "action_taken": "locked_and_disabled",
-    "time_to_detect_ms": 450,
+    "time_to_detect_ms": 45,
     "mitre_technique": "T1200 Hardware Additions",
     "recommended_followups": ["isolate_device"],
     "notes": "test incident",
 }
-
-
-def _make_outbox(path):
-    conn = sqlite3.connect(str(path))
-    conn.execute(
-        """
-        CREATE TABLE outbox (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            incident_json TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            attempts INTEGER NOT NULL DEFAULT 0,
-            next_retry_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.commit()
-    return conn
 
 
 def test_ensure_csv_header_creates_a_file_with_the_right_columns(tmp_path):
@@ -70,30 +70,79 @@ def test_ensure_csv_header_creates_a_file_with_the_right_columns(tmp_path):
     ensure_csv_header(path)
 
     with path.open(encoding="utf-8") as handle:
-        header = next(csv.reader(handle))
-    assert header == CSV_FIELDS
+        assert next(csv.reader(handle)) == CSV_FIELDS
 
 
-def test_ensure_csv_header_does_not_overwrite_an_existing_file(tmp_path):
+def test_ensure_csv_header_accepts_an_existing_file_with_the_same_columns(tmp_path):
     path = tmp_path / "results.csv"
-    path.write_text("not a header\n", encoding="utf-8")
+    ensure_csv_header(path)
 
     ensure_csv_header(path)
 
-    assert path.read_text(encoding="utf-8") == "not a header\n"
+
+def test_ensure_csv_header_refuses_a_file_with_other_columns(tmp_path):
+    path = tmp_path / "results.csv"
+    path.write_text("payload,time_to_lock_ms\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        ensure_csv_header(path)
+    assert path.read_text(encoding="utf-8") == "payload,time_to_lock_ms\n"
 
 
-def test_incident_to_row_extracts_the_expected_fields():
-    row = incident_to_row("burst", SAMPLE_INCIDENT)
+def test_incident_to_row_extracts_trial_timings():
+    row = incident_to_row("burst", SAMPLE_INCIDENT, chars_landed=41)
 
+    assert row["detected"] == 1
     assert row["payload"] == "burst"
-    assert row["device_id"] == "dev-1"
-    assert row["device_name"] == "Digispark Test Device"
-    assert row["verdict"] == "blocked"
-    assert row["action_taken"] == "locked_and_disabled"
-    assert row["time_to_detect_ms"] == 450
-    assert row["time_to_lock_ms"] == 450  # same moment; see the module docstring
-    assert row["window_n_events"] == 30.0
+    assert row["presses_to_block"] == 40.0
+    assert row["ms_to_block"] == 212.5
+    assert row["ms_to_lock"] == 230.0
+    assert row["ms_to_response"] == 410.0
+    assert row["time_to_detect_ms"] == 45
+    assert row["payload_chars"] == PAYLOAD_CHARS
+    assert row["chars_landed"] == 41
+
+
+def test_incident_to_row_for_an_undetected_run():
+    row = incident_to_row("randomized", None, chars_landed=PAYLOAD_CHARS)
+
+    assert row["detected"] == 0
+    assert row["incident_id"] == ""
+    assert row["ms_to_block"] == ""
+    assert row["chars_landed"] == PAYLOAD_CHARS
+
+
+def test_incident_to_row_leaves_missing_timings_blank():
+    incident = dict(SAMPLE_INCIDENT, features_summary={"window_n_events": 30.0})
+
+    row = incident_to_row("burst", incident, chars_landed=None)
+
+    assert row["ms_to_lock"] == ""
+    assert row["presses_to_block"] == ""
+    assert row["chars_landed"] == ""
+
+
+def test_append_row_writes_a_csv_line(tmp_path):
+    path = tmp_path / "results.csv"
+    ensure_csv_header(path)
+
+    append_row(path, incident_to_row("burst", SAMPLE_INCIDENT, chars_landed=None))
+
+    with path.open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["payload"] == "burst"
+    assert rows[0]["presses_to_block"] == "40.0"
+
+
+@pytest.mark.parametrize(("answer", "expected"), [("", None), (" 12 ", 12), ("0", 0)])
+def test_parse_chars_landed(answer, expected):
+    assert parse_chars_landed(answer) == expected
+
+
+@pytest.mark.parametrize("answer", ["-1", str(PAYLOAD_CHARS + 1), "many"])
+def test_parse_chars_landed_rejects_bad_input(answer):
+    with pytest.raises(ValueError):
+        parse_chars_landed(answer)
 
 
 def test_read_outbox_incidents_returns_empty_list_for_a_missing_file(tmp_path):
@@ -102,72 +151,62 @@ def test_read_outbox_incidents_returns_empty_list_for_a_missing_file(tmp_path):
 
 def test_read_outbox_incidents_reads_real_rows(tmp_path):
     path = tmp_path / "outbox.sqlite3"
-    conn = _make_outbox(path)
-    conn.execute(
-        "INSERT INTO outbox (incident_json, created_at, attempts, next_retry_at) "
-        "VALUES (?, ?, 0, ?)",
-        (json.dumps(SAMPLE_INCIDENT), "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
-    )
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE outbox (id INTEGER PRIMARY KEY, incident_json TEXT)")
+    conn.execute("INSERT INTO outbox (incident_json) VALUES (?)", (json.dumps(SAMPLE_INCIDENT),))
     conn.commit()
     conn.close()
 
-    entries = read_outbox_incidents(path)
+    [incident] = read_outbox_incidents(path)
 
-    assert len(entries) == 1
-    assert entries[0]["incident"]["device"]["device_id"] == "dev-1"
-
-
-def test_append_row_writes_a_csv_line(tmp_path):
-    path = tmp_path / "results.csv"
-    ensure_csv_header(path)
-
-    append_row(path, "burst", SAMPLE_INCIDENT)
-
-    with path.open(encoding="utf-8") as handle:
-        rows = list(csv.DictReader(handle))
-    assert len(rows) == 1
-    assert rows[0]["payload"] == "burst"
-    assert rows[0]["device_id"] == "dev-1"
+    assert incident["device"]["device_id"] == "dev-1"
 
 
-def test_wait_for_new_incident_skips_already_seen_rows_and_blocks_until_a_new_one(
-    tmp_path, monkeypatch
-):
-    path = tmp_path / "outbox.sqlite3"
-    conn = _make_outbox(path)
-    conn.execute(
-        "INSERT INTO outbox (incident_json, created_at, attempts, next_retry_at) "
-        "VALUES (?, ?, 0, ?)",
-        (json.dumps(SAMPLE_INCIDENT), "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+def test_read_connector_incidents_returns_items_and_survives_failures():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"items": [SAMPLE_INCIDENT], "total": 1})
+
+    ok = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://test")
+    down = httpx.Client(
+        transport=httpx.MockTransport(lambda r: (_ for _ in ()).throw(httpx.ConnectError("x"))),
+        base_url="http://test",
     )
-    conn.commit()
-    conn.close()
 
-    [existing] = read_outbox_incidents(path)
-    seen = {existing["row_id"]}
+    assert read_connector_incidents(ok) == [SAMPLE_INCIDENT]
+    assert read_connector_incidents(down) == []
+    assert read_connector_incidents(None) == []
 
-    call_count = {"n": 0}
 
-    def fake_sleep(_seconds):
-        call_count["n"] += 1
-        if call_count["n"] == 1:
-            # Simulate a second incident landing after the first poll.
-            conn = sqlite3.connect(str(path))
-            conn.execute(
-                "INSERT INTO outbox (incident_json, created_at, attempts, next_retry_at) "
-                "VALUES (?, ?, 0, ?)",
-                (
-                    json.dumps(SAMPLE_INCIDENT),
-                    "2026-01-01T00:00:01+00:00",
-                    "2026-01-01T00:00:01+00:00",
-                ),
-            )
-            conn.commit()
-            conn.close()
+def test_wait_for_new_incident_skips_seen_ids_until_a_new_one_appears():
+    old = dict(SAMPLE_INCIDENT)
+    new = dict(SAMPLE_INCIDENT, incident_id="22222222-2222-2222-2222-222222222222")
+    polls = iter([[old], [old], [old, new]])
+    sleeps = []
 
-    monkeypatch.setattr(hardware_trial_module.time, "sleep", fake_sleep)
+    found = wait_for_new_incident(
+        lambda: next(polls), {old["incident_id"]}, timeout_seconds=60, sleep=sleeps.append
+    )
 
-    new_entry = wait_for_new_incident(path, seen)
+    assert found["incident_id"] == new["incident_id"]
+    assert len(sleeps) == 2
 
-    assert new_entry["row_id"] not in seen
-    assert call_count["n"] >= 1
+
+def test_wait_for_new_incident_times_out():
+    now = {"t": 0.0}
+
+    def clock():
+        return now["t"]
+
+    def sleep(seconds):
+        now["t"] += seconds
+
+    found = wait_for_new_incident(
+        lambda: [SAMPLE_INCIDENT],
+        {SAMPLE_INCIDENT["incident_id"]},
+        timeout_seconds=5,
+        sleep=sleep,
+        clock=clock,
+    )
+
+    assert found is None
+    assert now["t"] >= 5
