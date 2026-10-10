@@ -15,6 +15,8 @@ dependencies = [
     "pydantic==2.10.4",
     "SQLAlchemy==2.0.36",
     "scikit-learn==1.6.0",
+    "joblib==1.4.2",
+    "matplotlib==3.9.3",
     "numpy==2.2.1",
     "pandas==2.2.3",
     "sentence-transformers==3.3.1",
@@ -38,7 +40,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 addopts = "-ra"
 
 [tool.ruff]
@@ -52,3 +54,9 @@ ignore = []
 
 [tool.ruff.lint.isort]
 known-first-party = ["continuum"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's own idiom: Depends(...)/Query(...)/Header(...) as argument
+# defaults is how routes and dependencies declare their inputs, not a
+# mutable-default bug B008 is meant to catch.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header"]

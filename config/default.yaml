@@ -27,21 +27,40 @@ detection:
   # triggered. Prevents one noisy window from causing a block.
   debounce_windows: 2
 
+  # 1 (fewest alerts) to 10 (most alerts). 5 uses the trained model's own
+  # calibrated threshold unchanged; each step away shifts that threshold
+  # by 0.01 anomaly-score units (see detection/scorer.py). Read by the
+  # runtime at startup; the dashboard's Settings page edits it.
+  sensitivity: 5
+
 response:
-  # "enforce": lock the workstation and disable the device.
   # "alert_only": raise a toast notification but take no blocking action.
-  # Use alert_only while tuning detection on a new machine.
-  mode: enforce
+  #   Use this while tuning detection on a new machine.
+  # "lock_only": lock the workstation but never disable a device.
+  # "lock_and_disable": lock the workstation and disable the offending
+  #   device. Default, and what the HID Firewall is actually for.
+  mode: lock_and_disable
 
   # Seconds a disabled device stays disabled before Continuum
   # automatically re-enables it. Hard safety rail against a permanent
-  # lockout; see CLAUDE.md.
-  auto_release_timeout_seconds: 300
+  # lockout.
+  auto_release_timeout_seconds: 600
 
-  # Device identifiers (Win32 device instance IDs or interface paths)
-  # that must never be disabled, for example a laptop's built-in
-  # keyboard. Empty by default; fill in before running on real hardware.
+  # Device identifiers (Windows PnP device instance ids) that must
+  # never be disabled, for example a laptop's built-in keyboard. Empty
+  # by default; fill in before running on real hardware.
   allowlist: []
+
+  # Disabling a non-USB device (bus_type PS2 or Unknown) is refused
+  # unless this is explicitly set to true. The built-in laptop keyboard
+  # is usually enumerated as PS2; disabling it is almost never what you
+  # want, so this stays off by default.
+  allow_non_usb_disable: false
+
+  # When true, every response decision is logged as if it happened, but
+  # pnputil and LockWorkStation are never actually called. Useful for
+  # a first run on a new machine.
+  dry_run: false
 
 connector:
   host: 127.0.0.1
@@ -55,9 +74,19 @@ connector:
 rag:
   ollama_host: http://127.0.0.1:11434
   ollama_model: llama3.1:8b
+
+  # Low on purpose: an incident-response assistant should be literal and
+  # repeatable, not creative.
+  ollama_temperature: 0.1
+  ollama_timeout_seconds: 30
+
   embedding_model: all-MiniLM-L6-v2
   chroma_path: data/chroma
   chroma_collection: continuum_incidents
+
+  # Human-authored playbook and knowledge markdown files, tracked in git
+  # as source content, unlike the rest of data/ which is generated.
+  corpus_path: data/corpus
 
   # Minimum similarity score, and minimum number of supporting passages,
   # required before IncidentRAG will attempt an answer instead of
@@ -65,6 +94,16 @@ rag:
   min_similarity: 0.45
   min_supporting_passages: 2
   top_k: 5
+
+  # Chunking: "tokens" here means whitespace-separated words, a simple,
+  # dependency-free proxy for real subword tokens.
+  chunk_size_tokens: 300
+  chunk_overlap_tokens: 50
+
+  # The confidence gate's score (0 to 1, blending retrieval and answer
+  # support signals) must meet this before IncidentRAG will answer at
+  # all. Below it, abstaining is correct behaviour, not a failure.
+  confidence_threshold: 0.5
 
 dashboard:
   host: 127.0.0.1

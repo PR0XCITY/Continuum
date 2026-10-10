@@ -47,7 +47,7 @@ function Invoke-RunApi {
 }
 
 function Invoke-RunDashboard {
-    & $VenvPython -m streamlit run (Join-Path $PSScriptRoot 'src\continuum\dashboard\app.py')
+    & $VenvPython -m streamlit run (Join-Path $PSScriptRoot 'src\continuum\dashboard\app.py') --browser.gatherUsageStats false --server.address 127.0.0.1
 }
 
 function Invoke-RunAll {

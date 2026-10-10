@@ -2,22 +2,31 @@
 .env
 config/local.yaml
 
-# Runtime data: baselines, SQLite, Chroma, logs. Never committed; only the
-# directory placeholders below are tracked so the tree exists on checkout.
+# Runtime data: baselines, trained models, SQLite, Chroma, logs. Never
+# committed; only the directory placeholders below are tracked so the
+# tree exists on checkout.
 data/*
 !data/.gitkeep
 !data/baselines/
+!data/models/
 !data/db/
 !data/chroma/
 !data/logs/
 data/baselines/*
 !data/baselines/.gitkeep
+data/models/*
+!data/models/.gitkeep
 data/db/*
 !data/db/.gitkeep
 data/chroma/*
 !data/chroma/.gitkeep
 data/logs/*
 !data/logs/.gitkeep
+
+# data/corpus (playbooks) and data/eval (evaluation questions) are
+# hand-authored source content, tracked like any other doc.
+!data/corpus/
+!data/eval/
 
 # Python
 __pycache__/

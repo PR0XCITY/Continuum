@@ -1,0 +1,24 @@
+# Streamlit configuration for the Continuum dashboard. Streamlit reads
+# this from the directory it is started in, which is the repo root when
+# using `just run-dashboard` or `.\tasks.ps1 run-dashboard`.
+
+[browser]
+# Everything runs locally: never send Streamlit usage statistics.
+gatherUsageStats = false
+
+[server]
+address = "127.0.0.1"
+port = 8501
+# No browser auto-open and no first-run e-mail prompt; open the printed URL.
+headless = true
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#111111"
+backgroundColor = "#FBFBFA"
+secondaryBackgroundColor = "#F7F6F3"
+textColor = "#2F3437"
+font = "sans serif"

@@ -6,8 +6,8 @@ process boundaries, including:
     KeyEvent        A single capture-thread event: timestamp, event type
                     (down/up), per-session press counter and device
                     identifier. Deliberately has no field for which key or
-                    character was involved; see CLAUDE.md, "never a
-                    keylogger".
+                    character was involved: Continuum is never a
+                    keylogger.
     DeviceInfo      Stable identifier and metadata for a physical HID device
                     (vendor id, product id, interface path, display name).
     FeatureWindow   One windowed batch of per-device cadence features.
@@ -112,8 +112,8 @@ class KeyEvent(StrictModel):
 
     Only a timestamp, event type, per-session press counter and device
     identifier may appear here. There is no field for a key code, scan
-    code, character or virtual-key value, and none may be added; see
-    CLAUDE.md, "never a keylogger".
+    code, character or virtual-key value, and none may be added:
+    Continuum is never a keylogger.
     """
 
     device_id: str = Field(min_length=1, max_length=256)

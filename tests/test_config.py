@@ -20,8 +20,8 @@ def test_load_settings_reads_the_real_default_config():
     assert isinstance(settings, Settings)
     assert settings.detection.window_size == 40
     assert settings.detection.anomaly_threshold == 0.65
-    assert settings.response.mode == "enforce"
-    assert settings.response.auto_release_timeout_seconds == 300
+    assert settings.response.mode == "lock_and_disable"
+    assert settings.response.auto_release_timeout_seconds == 600
     assert settings.connector.port == 8731
     assert settings.rag.ollama_model == "llama3.1:8b"
     assert settings.dashboard.port == 8501
@@ -87,10 +87,10 @@ def test_env_overrides_a_local_override_file(tmp_path):
     local_override_path = tmp_path / "local.yaml"
     local_override_path.write_text("response:\n  mode: alert_only\n", encoding="utf-8")
 
-    env = {"CONTINUUM_RESPONSE__MODE": "enforce"}
+    env = {"CONTINUUM_RESPONSE__MODE": "lock_only"}
     settings = load_settings(local_override_path=local_override_path, env=env)
 
-    assert settings.response.mode == "enforce"
+    assert settings.response.mode == "lock_only"
 
 
 def test_missing_local_override_file_is_not_an_error(tmp_path):

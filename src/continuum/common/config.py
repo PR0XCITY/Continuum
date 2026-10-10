@@ -55,12 +55,15 @@ class DetectionSettings(StrictSettingsModel):
     debounce_ms: int = Field(ge=0)
     anomaly_threshold: float
     debounce_windows: int = Field(gt=0)
+    sensitivity: int = Field(default=5, ge=1, le=10)
 
 
 class ResponseSettings(StrictSettingsModel):
-    mode: Literal["enforce", "alert_only"]
+    mode: Literal["alert_only", "lock_only", "lock_and_disable"]
     auto_release_timeout_seconds: int = Field(gt=0)
     allowlist: list[str] = Field(default_factory=list)
+    allow_non_usb_disable: bool = False
+    dry_run: bool = False
 
 
 class ConnectorSettings(StrictSettingsModel):
@@ -73,12 +76,18 @@ class ConnectorSettings(StrictSettingsModel):
 class RagSettings(StrictSettingsModel):
     ollama_host: str = Field(min_length=1)
     ollama_model: str = Field(min_length=1)
+    ollama_temperature: float = Field(ge=0.0, le=1.0)
+    ollama_timeout_seconds: float = Field(gt=0.0)
     embedding_model: str = Field(min_length=1)
     chroma_path: Path
     chroma_collection: str = Field(min_length=1)
+    corpus_path: Path
     min_similarity: float = Field(ge=0.0, le=1.0)
     min_supporting_passages: int = Field(ge=0)
     top_k: int = Field(gt=0)
+    chunk_size_tokens: int = Field(gt=0)
+    chunk_overlap_tokens: int = Field(ge=0)
+    confidence_threshold: float = Field(ge=0.0, le=1.0)
 
 
 class DashboardSettings(StrictSettingsModel):

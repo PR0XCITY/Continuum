@@ -38,7 +38,7 @@ run-api:
 
 # Run the Streamlit dashboard.
 run-dashboard:
-    {{venv_python}} -m streamlit run src/continuum/dashboard/app.py
+    {{venv_python}} -m streamlit run src/continuum/dashboard/app.py --browser.gatherUsageStats false --server.address 127.0.0.1
 
 # Run the connector and the dashboard together, each in its own window.
 # The runtime is intentionally not included here; it is elevated and run

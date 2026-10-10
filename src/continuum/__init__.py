@@ -16,7 +16,7 @@ Subpackages:
     rag         Local retrieval-augmented incident-response assistant.
     dashboard   Streamlit operator dashboard.
 
-This module contains no feature logic. See CLAUDE.md for the hard design
-rules that govern every subpackage, and tools/ and tests/ for simulation and
+This module contains no feature logic. See README.md for the design rules
+that govern every subpackage, and tools/ and tests/ for simulation and
 verification helpers that live outside the installable package.
 """

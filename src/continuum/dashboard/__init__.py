@@ -6,6 +6,10 @@ manually releasing a blocked device, and asking IncidentRAG questions
 about the incident history. Talks to the connector only over its
 bearer-token-protected local API, never directly to the database.
 
-Uses the minimalist-ui design skill for layout and styling, and that
-skill only, per CLAUDE.md.
+Modules:
+    app.py      The Streamlit pages and navigation (run this file).
+    api.py      ConnectorClient: the dashboard's only network code.
+    helpers.py  Pure formatting, filtering and chart-shaping functions,
+                unit tested without a Streamlit session.
+    style.py    CSS and HTML builders that escape every value they render.
 """

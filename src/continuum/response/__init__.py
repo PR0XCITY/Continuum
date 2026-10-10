@@ -17,3 +17,22 @@ Every function here that disables a device must go through
 blocker_windows.py's safety checks; nothing else in this package may call
 pnputil directly.
 """
+
+from continuum.response.alerts import log_event, notify
+from continuum.response.blocker_windows import (
+    BlockDecision,
+    BlockResult,
+    DeviceBlocker,
+    is_elevated,
+)
+from continuum.response.lockscreen import lock_workstation
+
+__all__ = [
+    "BlockDecision",
+    "BlockResult",
+    "DeviceBlocker",
+    "is_elevated",
+    "lock_workstation",
+    "log_event",
+    "notify",
+]

@@ -83,8 +83,7 @@ hook cannot do the one thing this project needs. Raw Input can, because
   keyboards also carry a `VID_`/`PID_` pair and are currently classified
   as `"USB"`; distinguishing them reliably needs a device-tree query
   (SetupAPI / CfgMgr32) that this backend does not perform, to keep the
-  implementation to the Raw Input and basic Win32 surface described in
-  CLAUDE.md. In practice, some Bluetooth LE HID devices use a path like
+  implementation to the Raw Input and basic Win32 surface. In practice, some Bluetooth LE HID devices use a path like
   `...Dev_VID&02000E_PID&3412...` (`VID&`/`PID&`, not `VID_`/`PID_`),
   which this backend's parser does not match at all; those devices fall
   through to `"Unknown"` with the `"0000"`/`"0000"` placeholder below,
@@ -108,4 +107,4 @@ hook cannot do the one thing this project needs. Raw Input can, because
 - **Capture itself needs no elevation.** Everything in this file,
   including raising the capture thread's priority, runs unprivileged.
   Only the response layer's device disable/enable, via `pnputil`, needs
-  an elevated process; see CLAUDE.md and `src/continuum/response/`.
+  an elevated process; see `src/continuum/response/`.

@@ -2,16 +2,17 @@
 
 These tests exist before any feature logic does. They guard the things
 the project skeleton promises: every module imports cleanly, the default
-config is valid and has the shape later code will rely on, and the hard
-design rules are actually present in CLAUDE.md and not violated by any
-tracked text file in the repository.
+config is valid and has the shape later code will rely on, and no
+tracked text file in the repository contains an em dash.
 """
 
 from __future__ import annotations
 
 import importlib
 import pathlib
+import subprocess
 
+import pytest
 import yaml
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -74,50 +75,24 @@ def test_default_config_is_valid_yaml_with_expected_sections():
     assert "chroma_path" in loaded["rag"]
 
 
-def test_claude_md_contains_every_hard_design_rule():
-    text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-
-    required_phrases = [
-        "Never a keylogger",
-        "Capture is isolated from analysis",
-        "Everything runs locally",
-        "structured and schema-validated",
-        "always requires a bearer token",
-        "valid and safe output of IncidentRAG",
-        "never block the last remaining keyboard",
-        "never block an allowlisted device",
-        "auto-release",
-        "releases every blocked device",
-        "No em dashes",
-    ]
-
-    for phrase in required_phrases:
-        assert phrase in text, f"CLAUDE.md is missing required rule text: {phrase!r}"
-
-
 def _tracked_text_files():
-    # .agents and .claude/skills hold vendored skill packages, not Continuum
-    # project content; the em dash rule governs what this project authors,
-    # not third-party skill docs installed alongside it.
-    skip_dirs = {
-        ".git",
-        ".venv",
-        "venv",
-        "data",
-        "node_modules",
-        ".ruff_cache",
-        ".pytest_cache",
-        ".agents",
-        ".claude",
-    }
+    """Text files git tracks or would track: ignored and excluded paths are skipped."""
     text_suffixes = {".md", ".py", ".yaml", ".yml", ".toml", ".ps1", ".txt", ""}
+    try:
+        listing = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("git is not available to list repository files")
 
-    for path in REPO_ROOT.rglob("*"):
-        if path == pathlib.Path(__file__).resolve():
-            continue
-        if not path.is_file():
-            continue
-        if any(part in skip_dirs for part in path.parts):
+    this_file = pathlib.Path(__file__).resolve()
+    for name in listing.splitlines():
+        path = REPO_ROOT / name
+        if path.resolve() == this_file or not path.is_file():
             continue
         if path.name == "justfile" or path.suffix in text_suffixes:
             yield path

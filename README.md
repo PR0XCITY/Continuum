@@ -8,16 +8,18 @@ offending device, records every response as a structured incident, and
 lets an analyst ask incident-response questions against that incident
 history through a local retrieval-augmented assistant.
 
-See `CLAUDE.md` for the full design rules this project follows. The short
-version: no key identity is ever captured or logged, everything runs
-locally with no cloud calls, and there are hard safety rails around
-blocking a device.
+Design rules this project follows: no key identity is ever captured or
+logged, capture is isolated from analysis, everything runs locally with
+no cloud calls or telemetry, every incident is schema-validated, the
+connector API always requires a bearer token, "I don't know" is a valid
+answer from IncidentRAG, and there are hard safety rails around blocking
+a device.
 
 ## Status
 
-This is the project skeleton. No feature logic is implemented yet. The
-layout, configuration, task runner, lint and test setup are in place so
-that feature work can start from a clean, checked baseline.
+Capture, detection, response, the connector API, IncidentRAG and the
+Streamlit dashboard are implemented and covered by tests. Hardware trial
+results are recorded in `docs/hardware_results.md`.
 
 ## Components
 

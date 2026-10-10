@@ -1,0 +1,221 @@
+# IncidentRAG evaluation questions.
+#
+# 30 answerable questions (20 about playbooks, 10 about incident history)
+# and 10 unanswerable or off-topic questions that IncidentRAG must
+# abstain on.
+#
+# expected_doc_ids name the documents a correct answer should cite:
+#   - playbooks: the file name without .md under data/corpus/playbooks/
+#   - incidents: incident_id values produced by tools/gen_incidents.py with
+#     the seed below (the first eight records are its NOTABLE_INCIDENTS)
+# A question that needs no sources (answerable: false) has an empty list.
+
+version: 1
+incident_generator:
+  tool: tools/gen_incidents.py
+  seed: 1337
+  count: 200
+
+questions:
+  # --- playbooks -----------------------------------------------------------
+  - id: pb-01
+    question: A device was just blocked by Continuum. What should I do first?
+    answerable: true
+    expected_doc_ids: [pb-blocked-hid-device-response]
+
+  - id: pb-02
+    question: Why should I unplug a blocked device if Continuum has already disabled it?
+    answerable: true
+    expected_doc_ids: [pb-blocked-hid-device-response]
+
+  - id: pb-03
+    question: How can I tell whether a USB device that claims to be a keyboard is actually a Rubber Ducky or other BadUSB tool?
+    answerable: true
+    expected_doc_ids: [pb-badusb-triage-checklist]
+
+  - id: pb-04
+    question: Why shouldn't I trust a device's vendor and product id when deciding if it is safe?
+    answerable: true
+    expected_doc_ids: [pb-badusb-triage-checklist, pb-usb-allowlisting-policy]
+
+  - id: pb-05
+    question: Which Windows event logs show what commands ran after a keystroke injection?
+    answerable: true
+    expected_doc_ids: [pb-post-injection-command-review]
+
+  - id: pb-06
+    question: Where is a user's PowerShell command history file stored?
+    answerable: true
+    expected_doc_ids: [pb-post-injection-command-review]
+
+  - id: pb-07
+    question: Event 4688 is missing from the Security log. Does that mean no commands were executed?
+    answerable: true
+    expected_doc_ids: [pb-post-injection-command-review]
+
+  - id: pb-08
+    question: Should devices be allowlisted by vendor id or by device instance id?
+    answerable: true
+    expected_doc_ids: [pb-usb-allowlisting-policy]
+
+  - id: pb-09
+    question: How should we roll out a device allowlist to a new department?
+    answerable: true
+    expected_doc_ids: [pb-usb-allowlisting-policy]
+
+  - id: pb-10
+    question: How do I preserve evidence after finding a rogue USB device on a workstation?
+    answerable: true
+    expected_doc_ids: [pb-physical-access-evidence-preservation]
+
+  - id: pb-11
+    question: Why should building access logs and camera footage be requested quickly after a physical access incident?
+    answerable: true
+    expected_doc_ids: [pb-physical-access-evidence-preservation]
+
+  - id: pb-12
+    question: A user says Continuum blocked their gaming keyboard. How do I decide whether it was a false positive?
+    answerable: true
+    expected_doc_ids: [pb-false-positive-vs-attack]
+
+  - id: pb-13
+    question: Can a fast human typist produce burst injection cadence?
+    answerable: true
+    expected_doc_ids: [pb-false-positive-vs-attack]
+
+  - id: pb-14
+    question: Which Group Policy settings restrict installation of unknown USB keyboards?
+    answerable: true
+    expected_doc_ids: [pb-windows-hid-hardening]
+
+  - id: pb-15
+    question: What can go wrong when enabling the policy that prevents installation of devices not described by other policy settings?
+    answerable: true
+    expected_doc_ids: [pb-windows-hid-hardening]
+
+  - id: pb-16
+    question: What sections should a post-incident review contain?
+    answerable: true
+    expected_doc_ids: [pb-post-incident-review-template]
+
+  - id: pb-17
+    question: Which MITRE ATT&CK technique should a HID injection incident be tagged with?
+    answerable: true
+    expected_doc_ids: [pb-mitre-attack-mapping]
+
+  - id: pb-18
+    question: Should a keystroke injection incident be tagged as T1056.001 Keylogging?
+    answerable: true
+    expected_doc_ids: [pb-mitre-attack-mapping]
+
+  - id: pb-19
+    question: How do I re-enable every device Continuum has disabled in an emergency?
+    answerable: true
+    expected_doc_ids: [pb-releasing-blocked-devices]
+
+  - id: pb-20
+    question: How long does a disabled device stay disabled before Continuum releases it automatically?
+    answerable: true
+    expected_doc_ids: [pb-releasing-blocked-devices]
+
+  # --- incident history (seed 1337) -----------------------------------------
+  - id: inc-01
+    question: What happened in the incident at the finance office reception PC?
+    answerable: true
+    expected_doc_ids: [3d31b4c0-d3dd-5e97-a668-6e2858fd7162]
+
+  - id: inc-02
+    question: Which incident involved a scheduled task named UpdaterSvc, and what was done about it?
+    answerable: true
+    expected_doc_ids: [3d31b4c0-d3dd-5e97-a668-6e2858fd7162]
+
+  - id: inc-03
+    question: Was the Elgato Stream Deck on the video editing workstation a real attack?
+    answerable: true
+    expected_doc_ids: [9c6bb9b8-348c-54e5-805d-ce1bbe72a185]
+
+  - id: inc-04
+    question: What was blocked at the warehouse loading dock, and was it malicious?
+    answerable: true
+    expected_doc_ids: [74b799a7-a7ef-56c0-81c9-3855184983ba]
+
+  - id: inc-05
+    question: What happened with the USB stick delivered in an unsolicited parcel to the mailroom?
+    answerable: true
+    expected_doc_ids: [99724137-7433-558b-b731-fdae9597dbe3]
+
+  - id: inc-06
+    question: Which incident happened while the pilot group was in alert_only mode, and what ran on the machine?
+    answerable: true
+    expected_doc_ids: [eba409b2-9164-591f-997f-bc7bf6d9b64e]
+
+  - id: inc-07
+    question: Was the Arduino Leonardo blocked in the electronics lab an authorised exercise?
+    answerable: true
+    expected_doc_ids: [33e6355d-33b6-5023-a6be-e30fc271af66]
+
+  - id: inc-08
+    question: What was discovered on the library kiosk?
+    answerable: true
+    expected_doc_ids: [e0f0ca4f-76f6-57ad-a2f4-e86abf29fde4]
+
+  - id: inc-09
+    question: Which blocked macro pad or barcode scanner incidents were confirmed as false positives and allowlisted?
+    answerable: true
+    expected_doc_ids: [9c6bb9b8-348c-54e5-805d-ce1bbe72a185, 74b799a7-a7ef-56c0-81c9-3855184983ba]
+
+  - id: inc-10
+    question: A charging cable with an injection implant was found on the library kiosk. What was done, and what does the evidence preservation playbook recommend next?
+    answerable: true
+    expected_doc_ids: [e0f0ca4f-76f6-57ad-a2f4-e86abf29fde4, pb-physical-access-evidence-preservation]
+
+  # --- unanswerable or off-topic: must abstain ---------------------------------
+  - id: off-01
+    question: What is the capital of Peru?
+    answerable: false
+    expected_doc_ids: []
+
+  - id: off-02
+    question: How do I bake sourdough bread at home?
+    answerable: false
+    expected_doc_ids: []
+
+  - id: off-03
+    question: Who won the 2018 FIFA World Cup?
+    answerable: false
+    expected_doc_ids: []
+
+  - id: off-04
+    question: What is today's exchange rate between euros and Japanese yen?
+    answerable: false
+    expected_doc_ids: []
+
+  - id: off-05
+    question: Write a short poem about autumn leaves.
+    answerable: false
+    expected_doc_ids: []
+
+  - id: off-06
+    question: How do I configure a VLAN trunk on a Cisco switch?
+    answerable: false
+    expected_doc_ids: []
+
+  - id: off-07
+    question: Which ransomware strain encrypted the HR file server last week?
+    answerable: false
+    expected_doc_ids: []
+
+  - id: off-08
+    question: What is the CVSS score of CVE-2021-44228?
+    answerable: false
+    expected_doc_ids: []
+
+  - id: off-09
+    question: How do I enrol FIDO2 security keys for phishing-resistant MFA in Entra ID?
+    answerable: false
+    expected_doc_ids: []
+
+  - id: off-10
+    question: What is the local administrator password for the library kiosk?
+    answerable: false
+    expected_doc_ids: []
