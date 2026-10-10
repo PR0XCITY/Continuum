@@ -143,8 +143,12 @@ def _sidebar(client: ConnectorClient) -> str:
                 runtime_line = f"{style.status_dot(True)}Runtime running"
             else:
                 runtime_line = f"{style.status_dot(False)}Runtime not running"
-        except ApiError:
-            connector_line = f"{style.status_dot(False)}Connector unreachable"
+        except ApiError as error:
+            problem = {
+                401: "Connector rejected the API token",
+                429: "Connector busy (rate limited)",
+            }.get(error.status_code, "Connector unreachable")
+            connector_line = f"{style.status_dot(False)}{problem}"
             runtime_line = f"{style.status_dot(False)}Runtime status unknown"
         _html(
             f'<div class="ct-hint" style="line-height:2">{connector_line}<br>{runtime_line}</div>'

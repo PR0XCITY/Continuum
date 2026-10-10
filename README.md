@@ -115,6 +115,12 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned   # once per user, if script
 - downloads the embedding model once, so everything after this runs offline,
 - checks that Ollama and the model are installed.
 
+Clone into a short folder path such as `C:\src\Continuum`. PyTorch, which
+sentence-transformers needs, installs files nested deeply enough to pass Windows' 260
+character path limit when the project folder is already deep. If setup fails with
+`No such file or directory` under `torch\include`, move the clone somewhere shorter, or enable
+Windows long path support as pip's error message describes.
+
 If Python 3.12 is installed somewhere `py` does not find (a conda environment, for example),
 set `$env:CONTINUUM_PYTHON` to that `python.exe` before running setup.
 

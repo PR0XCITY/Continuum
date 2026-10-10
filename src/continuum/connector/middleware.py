@@ -31,7 +31,12 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp
 
 MAX_REQUEST_BODY_BYTES = 1_048_576  # 1 MiB
-RATE_LIMIT_MAX_REQUESTS = 120
+# Every caller (runtime, dashboard, tools) is 127.0.0.1, so they all share one
+# bucket. The dashboard's live view alone polls about 60 times a minute; 600
+# leaves room for it alongside the runtime and tools such as seed-demo, while
+# still stopping a runaway local client. It is not a defence against token
+# guessing, which a 256-bit token already makes hopeless.
+RATE_LIMIT_MAX_REQUESTS = 600
 RATE_LIMIT_WINDOW_SECONDS = 60.0
 
 
