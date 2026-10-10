@@ -37,7 +37,12 @@ param(
     [string[]]$Rest = @()
 )
 
-$ErrorActionPreference = 'Stop'
+# Not 'Stop': Windows PowerShell 5.1 turns anything a native program writes to
+# stderr (pip's retry warnings, Python's logging) into an error record when
+# output is redirected, which 'Stop' would treat as fatal. Native commands are
+# judged by their exit code instead (Assert-LastExit), and the cmdlets whose
+# failure must abort the script pass -ErrorAction Stop explicitly.
+$ErrorActionPreference = 'Continue'
 
 $Root = $PSScriptRoot
 $VenvPython = Join-Path $Root '.venv\Scripts\python.exe'
@@ -132,7 +137,9 @@ function Start-ComponentWindow([string]$Name, [switch]$Elevated) {
         '-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-File', (Join-Path $Root 'tasks.ps1'), "window-$Name"
     )
-    $options = @{ FilePath = 'powershell.exe'; ArgumentList = $arguments; PassThru = $true }
+    $options = @{
+        FilePath = 'powershell.exe'; ArgumentList = $arguments; PassThru = $true; ErrorAction = 'Stop'
+    }
     if ($Elevated) { $options['Verb'] = 'RunAs' }
     $process = Start-Process @options
     Set-Content -Path (Join-Path $RunDir "$Name.pid") -Value $process.Id -Encoding ascii
@@ -150,7 +157,6 @@ function Invoke-Logged([string]$Name, [string[]]$Arguments) {
     Write-Host "Log file: $log"
     Add-Content -Path $log -Value $banner -Encoding utf8
     # Python writes its logs to stderr; merge it without PowerShell's error formatting.
-    $ErrorActionPreference = 'Continue'
     & $VenvPython @Arguments 2>&1 | ForEach-Object {
         $line = "$_"
         Write-Host $line
@@ -180,9 +186,9 @@ function Invoke-Setup {
         Write-Host '.env already exists; left unchanged.'
     }
     else {
-        $example = Get-Content (Join-Path $Root '.env.example') -Raw
+        $example = Get-Content (Join-Path $Root '.env.example') -Raw -ErrorAction Stop
         $content = $example.Replace('change-me-to-a-long-random-token', (New-ApiToken))
-        Set-Content -Path $envFile -Value $content -Encoding ascii -NoNewline
+        Set-Content -Path $envFile -Value $content -Encoding ascii -NoNewline -ErrorAction Stop
         Write-Host 'Created .env with a new random API token.'
     }
 
