@@ -14,8 +14,9 @@ from continuum.common import Settings, get_settings, load_settings
 from continuum.common.config import DEFAULT_CONFIG_PATH, LOCAL_OVERRIDE_PATH
 
 
-def test_load_settings_reads_the_real_default_config():
-    settings = load_settings(env={})
+def test_load_settings_reads_the_real_default_config(tmp_path):
+    # Ignore this machine's config/local.yaml: only default.yaml is under test.
+    settings = load_settings(env={}, local_override_path=tmp_path / "no-local.yaml")
 
     assert isinstance(settings, Settings)
     assert settings.detection.window_size == 40
