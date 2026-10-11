@@ -208,7 +208,14 @@ def respond_to_block(
     other_enabled_keyboard_count_value: int,
     timings: dict[str, float] | None = None,
 ) -> ActionTaken:
-    """Lock first, then disable. Speed matters more than anything else here.
+    """Contain the device according to the response mode.
+
+    lock_and_disable locks first, then disables: fastest containment,
+    but the device keeps typing into the lock screen's password box
+    until the disable lands. disable_only disables the device and leaves
+    the session unlocked, locking only as a fallback when the disable
+    fails or a safety rail refuses it, so an attack is never left
+    running unchecked.
 
     If timings is given, the wall time spent locking and disabling, in
     milliseconds from the start of this call, is written into it.
@@ -217,20 +224,28 @@ def respond_to_block(
     disabled = False
     started = time.perf_counter()
 
-    if effective_mode in ("lock_only", "lock_and_disable"):
-        locked = lock_workstation()
+    def lock() -> bool:
+        done = lock_workstation()
         if timings is not None:
             timings["lock_done_ms"] = (time.perf_counter() - started) * 1000
+        return done
 
-    if effective_mode == "lock_and_disable":
-        block_result = blocker.disable(
+    def disable() -> bool:
+        return blocker.disable(
             device.instance_id,
             is_usb=device.is_usb,
             allowlist=allowlist,
             other_enabled_keyboard_count=other_enabled_keyboard_count_value,
             reason=f"anomaly_score={result.anomaly_score:.3f} threshold={result.threshold:.3f}",
-        )
-        disabled = block_result.success
+        ).success
+
+    if effective_mode in ("lock_only", "lock_and_disable"):
+        locked = lock()
+    if effective_mode in ("lock_and_disable", "disable_only"):
+        disabled = disable()
+    if effective_mode == "disable_only" and not disabled:
+        logger.warning("could not disable %s; locking the workstation instead", device.device_id)
+        locked = lock()
 
     if timings is not None:
         timings["response_done_ms"] = (time.perf_counter() - started) * 1000
@@ -711,6 +726,13 @@ def run_maintenance(
 def determine_effective_mode(settings: Settings, elevated: bool) -> str:
     """The response mode actually used this run, degraded if not elevated."""
     mode = settings.response.mode
+    if mode == "disable_only" and not elevated:
+        print(
+            "WARNING: not running elevated; disabling a device requires "
+            "Administrator. Falling back to lock-only response until Continuum "
+            "is restarted from an elevated session."
+        )
+        return "lock_only"
     if mode == "lock_and_disable" and not elevated:
         print(
             "WARNING: not running elevated; disabling a device requires "

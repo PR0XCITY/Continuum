@@ -30,7 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from continuum.common.config import Settings, load_settings
 
-ResponseMode = Literal["alert_only", "lock_only", "lock_and_disable"]
+ResponseMode = Literal["alert_only", "lock_only", "disable_only", "lock_and_disable"]
 
 MAX_ALLOWLIST_ENTRIES = 100
 _CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f\x7f]")

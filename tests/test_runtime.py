@@ -241,6 +241,81 @@ def test_lock_is_called_before_disable_is_attempted(tmp_path, monkeypatch):
     assert call_order == ["lock", "disable"]
 
 
+def test_disable_only_mode_disables_without_locking(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, "lock_workstation", lambda: pytest.fail("must not lock"))
+    monkeypatch.setattr(blocker_module, "is_elevated", lambda: True)
+    disabled = []
+    monkeypatch.setattr(blocker_module, "_pnputil_disable", disabled.append)
+    monkeypatch.setattr(blocker_module, "is_devnode_started", lambda i: False)
+    blocker = DeviceBlocker(disabled_devices_path=tmp_path / "disabled.json")
+    device = _device()
+
+    action = runtime.respond_to_block(
+        device,
+        _detection_result(),
+        effective_mode="disable_only",
+        blocker=blocker,
+        allowlist=[],
+        other_enabled_keyboard_count_value=1,
+    )
+
+    assert action == ActionTaken.DEVICE_DISABLED
+    assert disabled == [device.instance_id]
+
+
+def test_disable_only_mode_locks_when_the_disable_fails(tmp_path, monkeypatch):
+    locks = []
+    monkeypatch.setattr(runtime, "lock_workstation", lambda: locks.append(1) or True)
+    monkeypatch.setattr(blocker_module, "is_elevated", lambda: True)
+    monkeypatch.setattr(blocker_module, "DISABLE_VERIFY_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(blocker_module, "_pnputil_disable", lambda i: None)
+    monkeypatch.setattr(blocker_module, "is_devnode_started", lambda i: True)  # never takes effect
+    monkeypatch.setattr(blocker_module, "get_parent_instance_id", lambda i: None)
+    blocker = DeviceBlocker(disabled_devices_path=tmp_path / "disabled.json")
+    timings: dict[str, float] = {}
+
+    action = runtime.respond_to_block(
+        _device(),
+        _detection_result(),
+        effective_mode="disable_only",
+        blocker=blocker,
+        allowlist=[],
+        other_enabled_keyboard_count_value=1,
+        timings=timings,
+    )
+
+    assert action == ActionTaken.WORKSTATION_LOCKED
+    assert locks == [1]
+    assert "lock_done_ms" in timings
+
+
+def test_disable_only_mode_locks_when_a_safety_rail_refuses(tmp_path, monkeypatch):
+    locks = []
+    monkeypatch.setattr(runtime, "lock_workstation", lambda: locks.append(1) or True)
+    monkeypatch.setattr(blocker_module, "_pnputil_disable", lambda i: pytest.fail("refused"))
+    blocker = DeviceBlocker(disabled_devices_path=tmp_path / "disabled.json")
+    device = _device()
+
+    action = runtime.respond_to_block(
+        device,
+        _detection_result(),
+        effective_mode="disable_only",
+        blocker=blocker,
+        allowlist=[device.instance_id],
+        other_enabled_keyboard_count_value=1,
+    )
+
+    assert action == ActionTaken.WORKSTATION_LOCKED
+    assert locks == [1]
+
+
+def test_disable_only_degrades_to_lock_only_without_elevation():
+    settings = load_settings(env={"CONTINUUM_RESPONSE__MODE": "disable_only"})
+
+    assert runtime.determine_effective_mode(settings, elevated=False) == "lock_only"
+    assert runtime.determine_effective_mode(settings, elevated=True) == "disable_only"
+
+
 def test_lock_is_called_before_the_api_post(tmp_path, monkeypatch):
     call_order: list[str] = []
     monkeypatch.setattr(runtime, "lock_workstation", lambda: call_order.append("lock") or True)

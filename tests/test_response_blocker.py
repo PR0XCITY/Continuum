@@ -170,6 +170,7 @@ def test_disable_falls_back_to_the_parent_when_the_child_is_still_started(blocke
 
 
 def test_disable_fails_when_the_parent_fallback_also_fails(blocker, monkeypatch):
+    monkeypatch.setattr(blocker_module, "DISABLE_VERIFY_INTERVAL_SECONDS", 0.0)
     monkeypatch.setattr(blocker_module, "_pnputil_disable", lambda instance_id: None)
     monkeypatch.setattr(blocker_module, "is_devnode_started", lambda instance_id: True)
     monkeypatch.setattr(blocker_module, "get_parent_instance_id", lambda instance_id: PARENT_ID)
@@ -374,3 +375,15 @@ def test_forget_released_elsewhere_keeps_records_still_on_disk(blocker, monkeypa
 
     assert blocker.forget_released_elsewhere() == []
     assert blocker.is_disabled(CHILD_ID)
+
+
+def test_disable_succeeds_when_the_status_changes_a_moment_later(blocker, monkeypatch):
+    monkeypatch.setattr(blocker_module, "DISABLE_VERIFY_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(blocker_module, "_pnputil_disable", lambda i: None)
+    statuses = iter([True, True, False])
+    monkeypatch.setattr(blocker_module, "is_devnode_started", lambda i: next(statuses))
+
+    result = blocker.disable(CHILD_ID, is_usb=True, allowlist=[], other_enabled_keyboard_count=1)
+
+    assert result.success
+    assert result.disabled_instance_id == CHILD_ID

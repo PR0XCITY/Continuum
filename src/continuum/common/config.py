@@ -59,7 +59,7 @@ class DetectionSettings(StrictSettingsModel):
 
 
 class ResponseSettings(StrictSettingsModel):
-    mode: Literal["alert_only", "lock_only", "lock_and_disable"]
+    mode: Literal["alert_only", "lock_only", "disable_only", "lock_and_disable"]
     auto_release_timeout_seconds: int = Field(gt=0)
     allowlist: list[str] = Field(default_factory=list)
     allow_non_usb_disable: bool = False

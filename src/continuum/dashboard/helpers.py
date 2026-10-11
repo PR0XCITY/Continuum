@@ -23,6 +23,7 @@ VERDICT_ORDER = ("blocked", "suspicious", "normal", "idle")
 RESPONSE_MODE_LABELS = {
     "alert_only": "Alert only",
     "lock_only": "Lock only",
+    "disable_only": "Disable device",
     "lock_and_disable": "Lock and disable",
 }
 

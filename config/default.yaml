@@ -37,6 +37,10 @@ response:
   # "alert_only": raise a toast notification but take no blocking action.
   #   Use this while tuning detection on a new machine.
   # "lock_only": lock the workstation but never disable a device.
+  # "disable_only": disable the offending device and leave the session
+  #   unlocked; lock only as a fallback if the disable fails or a safety
+  #   rail refuses it. Avoids the device typing into the lock screen's
+  #   password box while the disable completes.
   # "lock_and_disable": lock the workstation and disable the offending
   #   device. Default, and what the HID Firewall is actually for.
   mode: lock_and_disable

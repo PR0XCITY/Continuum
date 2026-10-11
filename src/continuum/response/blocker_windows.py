@@ -44,6 +44,7 @@ import ctypes
 import json
 import subprocess
 import sys
+import time
 from collections.abc import Collection, Sequence
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -59,6 +60,11 @@ DEFAULT_DISABLED_DEVICES_PATH = _REPO_ROOT / "data" / "disabled_devices.json"
 DEFAULT_AUTO_RELEASE_TIMEOUT_SECONDS = 600.0
 
 PNPUTIL_TIMEOUT_SECONDS = 15.0
+
+# After pnputil returns, the device's status is checked up to this many
+# times, this far apart, before the disable is declared failed.
+DISABLE_VERIFY_ATTEMPTS = 5
+DISABLE_VERIFY_INTERVAL_SECONDS = 0.1
 
 CM_LOCATE_DEVNODE_NORMAL = 0x00000000
 CR_SUCCESS = 0x00000000
@@ -405,9 +411,31 @@ class DeviceBlocker:
         return None
 
     def _try_disable(self, instance_id: str) -> bool:
-        _pnputil_disable(instance_id)
-        # The exit code is not trusted; re-query the real device status.
-        return is_devnode_started(instance_id) is False
+        result = _pnputil_disable(instance_id)
+        # The exit code is not trusted; re-query the real device status,
+        # briefly, in case Windows completes the disable a moment later.
+        status = None
+        for attempt in range(DISABLE_VERIFY_ATTEMPTS):
+            status = is_devnode_started(instance_id)
+            if status is False:
+                return True
+            if attempt < DISABLE_VERIFY_ATTEMPTS - 1:
+                time.sleep(DISABLE_VERIFY_INTERVAL_SECONDS)
+
+        state = {None: "not found in the device tree", True: "still started"}[status]
+        returncode = getattr(result, "returncode", None)
+        output = " ".join(
+            (getattr(result, "stdout", "") or "").split()
+            + (getattr(result, "stderr", "") or "").split()
+        )
+        _logger.warning(
+            "disable did not take effect for %s: device %s; pnputil exit code %s, output: %s",
+            instance_id,
+            state,
+            returncode,
+            output[:400] or "(none)",
+        )
+        return False
 
     def enable(self, requested_instance_id: str) -> bool:
         record = self._records.get(requested_instance_id)

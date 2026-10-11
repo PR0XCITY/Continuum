@@ -219,7 +219,7 @@ after a change.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `detection.sensitivity` | `5` | 1 (fewest alerts) to 10 (most). 5 uses the model's calibrated threshold unchanged; each step moves it by 0.01. |
-| `response.mode` | `lock_and_disable` | `alert_only`, `lock_only` or `lock_and_disable`. Without elevation the runtime falls back to `lock_only`. |
+| `response.mode` | `lock_and_disable` | `alert_only`, `lock_only`, `disable_only` (disable the device and leave the PC unlocked, locking only if the disable fails) or `lock_and_disable`. Without elevation the runtime falls back to `lock_only`. |
 | `response.dry_run` | `false` | Log every decision but never lock or disable anything. |
 | `response.allowlist` | `[]` | Device instance ids that are never disabled, such as a barcode scanner. |
 | `response.auto_release_timeout_seconds` | `600` | Every disabled device is re-enabled after this long. |
