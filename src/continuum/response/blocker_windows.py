@@ -197,7 +197,13 @@ def _run_pnputil(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _pnputil_disable(instance_id: str) -> subprocess.CompletedProcess[str]:
-    return _run_pnputil(["/disable-device", instance_id])
+    # Windows classes every keyboard as a critical system device and refuses
+    # to disable one without /force ("Cannot disable critical system
+    # device"). That check exists so a user cannot disable their only
+    # keyboard; evaluate_block_decision() enforces the same protection and
+    # more (never the last keyboard, never an allowlisted or non-USB one),
+    # and it always runs before this is ever called.
+    return _run_pnputil(["/disable-device", instance_id, "/force"])
 
 
 def _pnputil_enable(instance_id: str) -> subprocess.CompletedProcess[str]:

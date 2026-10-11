@@ -387,3 +387,15 @@ def test_disable_succeeds_when_the_status_changes_a_moment_later(blocker, monkey
 
     assert result.success
     assert result.disabled_instance_id == CHILD_ID
+
+
+def test_pnputil_disable_forces_past_the_critical_device_check(monkeypatch):
+    # Windows refuses to disable any keyboard without /force; the safety rails
+    # in evaluate_block_decision are what stand in for that check.
+    calls = []
+    monkeypatch.setattr(blocker_module, "_run_pnputil", calls.append)
+
+    blocker_module._pnputil_disable(CHILD_ID)
+    blocker_module._pnputil_enable(CHILD_ID)
+
+    assert calls == [["/disable-device", CHILD_ID, "/force"], ["/enable-device", CHILD_ID]]
