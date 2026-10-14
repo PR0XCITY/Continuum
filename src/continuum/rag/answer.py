@@ -11,8 +11,8 @@ dropped from the valid citation set, not trusted.
 Providers (rag.llm_provider):
     ollama  a local model served by Ollama on 127.0.0.1. Nothing leaves
             the machine.
-    groq    a hosted model on Groq's API (default model
-            llama-3.1-8b-instant, the same Llama 3.1 8B family). The
+    groq    a hosted model on Groq's API (rag.groq_model, by default
+            qwen/qwen3.8-27b). The
             question and the top retrieved chunks, incident records
             included, are sent to Groq. The API key is read from the
             environment variable named by rag.groq_api_key_env_var and is
@@ -235,11 +235,24 @@ def call_groq(prompt: str, llm: LlmConfig, *, client: httpx.Client | None = None
     if response.status_code == 429:
         raise LlmUnavailableError("Groq's rate limit was reached (HTTP 429). Try again shortly.")
     if response.status_code != 200:
-        raise LlmUnavailableError(f"Groq returned HTTP {response.status_code}.")
+        raise LlmUnavailableError(
+            f"Groq returned HTTP {response.status_code}: {_groq_error_message(response)}"
+        )
     try:
         return _json(response, "Groq")["choices"][0]["message"]["content"] or ""
     except (KeyError, IndexError, TypeError) as error:
         raise LlmUnavailableError("Groq returned an unexpected response shape") from error
+
+
+def _groq_error_message(response: httpx.Response) -> str:
+    """Groq's own explanation, such as a retired model name. Never contains the key."""
+    try:
+        message = response.json()["error"]["message"]
+    except (ValueError, KeyError, TypeError):
+        return "no details"
+    if response.status_code == 404:
+        message += " Set rag.groq_model to a model your key lists at /models."
+    return str(message)[:300]
 
 
 def call_llm(prompt: str, llm: LlmConfig, *, client: httpx.Client | None = None) -> str:

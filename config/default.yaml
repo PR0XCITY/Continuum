@@ -77,7 +77,7 @@ connector:
 
 rag:
   # Which LLM writes IncidentRAG's answers:
-  #   groq    Llama 3.1 8B hosted on Groq's API. Needs internet and an API
+  #   groq    a model hosted on Groq's API (groq_model). Needs internet and an API
   #           key in .env (see groq_api_key_env_var). The question and the
   #           top retrieved chunks, incident records included, are sent to
   #           Groq; everything else in Continuum stays on this machine.
@@ -94,7 +94,9 @@ rag:
   ollama_model: llama3.1:8b
 
   groq_base_url: https://api.groq.com/openai/v1
-  groq_model: llama-3.1-8b-instant
+  # Groq retires models over time; it no longer offers llama-3.1-8b-instant.
+  # List what a key can use with GET {groq_base_url}/models.
+  groq_model: qwen/qwen3.8-27b
   # Name of the environment variable (or .env entry) holding the Groq key.
   # The key itself belongs in .env, never in this file.
   groq_api_key_env_var: GROQ_API_KEY

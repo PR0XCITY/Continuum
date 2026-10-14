@@ -19,7 +19,7 @@ looking human it:
    evidence" when the records do not support an answer (IncidentRAG).
 
 Detection, response, incident storage, search and the dashboard all run on the local machine,
-with no telemetry. By default IncidentRAG's answers are written by Llama 3.1 8B on Groq's
+with no telemetry. By default IncidentRAG's answers are written by Qwen3 27B on Groq's
 cloud API, which receives the question and the retrieved incident and playbook text; set
 `rag.llm_provider: ollama` to run the same model locally and keep everything offline.
 Continuum never records which keys were pressed, only their timing.
@@ -54,7 +54,7 @@ flowchart LR
 - **Connector API:** a local FastAPI service, with bearer-token authentication even on
   localhost, that validates and stores every incident.
 - **Retrieval Engine and Confidence Scorer:** hybrid retrieval over incidents and playbooks,
-  a cited answer from Llama 3.1 8B (Groq by default, or local Ollama), and a confidence gate that refuses when the evidence is
+  a cited answer from an LLM (Qwen3 on Groq by default, or Llama 3.1 8B in local Ollama), and a confidence gate that refuses when the evidence is
   weak.
 - **Dashboard:** live device status, incidents, Ask IncidentRAG, calibration and settings.
 
@@ -238,7 +238,7 @@ after a change.
 | `connector.database_path` | `data/db/continuum.sqlite3` | The incident database. |
 | `connector.auth_token_env_var` | `CONTINUUM_API_TOKEN` | Which environment variable (or `.env` entry) holds the bearer token. |
 | `rag.llm_provider` | `groq` | Which LLM writes answers: `groq` (cloud API) or `ollama` (local, offline). |
-| `rag.groq_model`, `rag.groq_base_url` | `llama-3.1-8b-instant`, `https://api.groq.com/openai/v1` | The Groq model and endpoint. |
+| `rag.groq_model`, `rag.groq_base_url` | `qwen/qwen3.8-27b`, `https://api.groq.com/openai/v1` | The Groq model and endpoint. Groq retires models over time; pick one your key lists at `/models`. |
 | `rag.groq_api_key_env_var` | `GROQ_API_KEY` | Which `.env` entry holds the Groq key. |
 | `rag.ollama_host`, `rag.ollama_model` | `http://127.0.0.1:11434`, `llama3.1:8b` | The local LLM, when `llm_provider` is `ollama`. |
 | `rag.llm_temperature`, `rag.llm_timeout_seconds` | `0.1`, `30` | Generation settings, either provider. |

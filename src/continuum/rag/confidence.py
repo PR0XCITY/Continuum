@@ -63,7 +63,7 @@ class RagAnswer:
     citations: list[Citation]
     message: str | None = None
     # Provider and model that wrote the answer, for example
-    # "Groq (cloud API), llama-3.1-8b-instant"; None when no LLM was called.
+    # "Groq (cloud API), qwen/qwen3.8-27b"; None when no LLM was called.
     generated_by: str | None = None
 
 

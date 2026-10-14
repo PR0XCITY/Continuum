@@ -18,7 +18,7 @@ Groq's API to write each answer. With `ollama`, nothing leaves at all.
 | Runtime (`python -m continuum.runtime`) | Administrator | Capture Layer, Cadence Analysis Engine, Block and Alert Handler |
 | Connector (`uvicorn continuum.connector.app:app`) | standard user | Connector/API Layer, Retrieval Engine, Confidence Scorer |
 | Dashboard (`streamlit run src/continuum/dashboard/app.py`) | standard user | Dashboard |
-| LLM: Groq API (default) or Ollama on `127.0.0.1:11434` | remote service, or standard user | the Llama 3.1 8B model that writes answers for the Retrieval Engine |
+| LLM: Groq API (default) or Ollama on `127.0.0.1:11434` | remote service, or standard user | the model that writes answers for the Retrieval Engine (Qwen3 27B on Groq, or Llama 3.1 8B in Ollama) |
 
 Only the runtime is elevated, because only disabling a device needs it.
 Keeping the web stack out of the elevated process means a bug in an HTTP
@@ -193,7 +193,7 @@ lock.
 - **Retrieval.** Hybrid: dense cosine similarity plus BM25 over the
   candidates, combined with reciprocal rank fusion. Filters by source
   type and date range.
-- **Answers.** Written by Llama 3.1 8B (Groq's API by default, or a local
+- **Answers.** Written by the configured LLM (Qwen3 27B on Groq's API by default, or a local
   Ollama model) from only the top 5 chunks, numbered `[1]` to `[5]`:
   - every chunk, incident notes included, is wrapped in quotes as data,
     and the instructions say text inside a source is never an

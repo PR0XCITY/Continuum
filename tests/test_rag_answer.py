@@ -372,3 +372,17 @@ def test_best_possible_confidence_assumes_a_perfectly_supported_answer():
     # 0.35 * 0.9 + 0.15 * 0.0 margin + 0.15 * 1.0 coverage + 0.35 * 1.0 support
     assert best_possible_confidence(strong) == pytest.approx(0.815)
     assert best_possible_confidence([_weak_chunk(1)]) < 0.5
+
+
+def test_call_groq_explains_a_retired_model():
+    message = "The model `old-model` does not exist or you do not have access to it."
+    client = _client(
+        lambda request: httpx.Response(404, json={"error": {"message": message}})
+    )
+
+    with pytest.raises(LlmUnavailableError) as raised:
+        answer.call_groq("p", GROQ, client=client)
+
+    assert message in str(raised.value)
+    assert "rag.groq_model" in str(raised.value)
+    assert "gsk_test_key" not in str(raised.value)
