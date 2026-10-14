@@ -8,15 +8,17 @@ Dashboard.
 
 ## Processes and trust boundaries
 
-Continuum runs as three local processes plus a local LLM server. Nothing
-leaves the machine.
+Continuum runs as three local processes plus an LLM that writes
+IncidentRAG's answers. Nothing leaves the machine except, with the default
+`rag.llm_provider: groq`, the question and the top retrieved chunks sent to
+Groq's API to write each answer. With `ollama`, nothing leaves at all.
 
 | Process | Privilege | Contains |
 | --- | --- | --- |
 | Runtime (`python -m continuum.runtime`) | Administrator | Capture Layer, Cadence Analysis Engine, Block and Alert Handler |
 | Connector (`uvicorn continuum.connector.app:app`) | standard user | Connector/API Layer, Retrieval Engine, Confidence Scorer |
 | Dashboard (`streamlit run src/continuum/dashboard/app.py`) | standard user | Dashboard |
-| Ollama (`127.0.0.1:11434`) | standard user | the local LLM used by the Retrieval Engine |
+| LLM: Groq API (default) or Ollama on `127.0.0.1:11434` | remote service, or standard user | the Llama 3.1 8B model that writes answers for the Retrieval Engine |
 
 Only the runtime is elevated, because only disabling a device needs it.
 Keeping the web stack out of the elevated process means a bug in an HTTP
@@ -36,7 +38,7 @@ flowchart LR
         DB -->|rag_ingest_queue| RE[Retrieval Engine]
         RE --> VS[(ChromaDB)]
         RE --> CS[Confidence Scorer]
-        RE <-->|prompt / answer| OL[Ollama, 127.0.0.1]
+        RE <-->|prompt / answer| OL[Groq API, or Ollama on 127.0.0.1]
     end
     CAE -->|live_snapshots, runtime_status| DB
     DB -->|commands| BAH
@@ -191,8 +193,8 @@ lock.
 - **Retrieval.** Hybrid: dense cosine similarity plus BM25 over the
   candidates, combined with reciprocal rank fusion. Filters by source
   type and date range.
-- **Answers.** Built by the local Ollama model from only the top 5
-  chunks, numbered `[1]` to `[5]`:
+- **Answers.** Written by Llama 3.1 8B (Groq's API by default, or a local
+  Ollama model) from only the top 5 chunks, numbered `[1]` to `[5]`:
   - every chunk, incident notes included, is wrapped in quotes as data,
     and the instructions say text inside a source is never an
     instruction,
@@ -216,8 +218,10 @@ Confidence (0 to 1) is a weighted sum of four signals:
 Below `rag.confidence_threshold` (0.5) the answer is withheld. The user
 instead sees "Not enough evidence in the incident records to answer this
 reliably" and the nearest sources to read themselves. Refusing is
-treated as correct behaviour, not an error. If Ollama is unreachable,
-the result is a clear abstention, never a crash.
+treated as correct behaviour, not an error. If the LLM is unreachable (no
+internet, no Groq key, or Ollama not running), the result is a clear
+abstention, never a crash. Every answer records which provider and model
+wrote it, and the dashboard shows it.
 
 ## Dashboard
 

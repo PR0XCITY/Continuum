@@ -309,6 +309,19 @@ def plain_label(text: str) -> str:
     return re.sub(r"\s+", " ", _MARKDOWN_SPECIALS.sub(" ", text)).strip()
 
 
+def llm_disclosure(provider: str, rag_settings: Any) -> str:
+    """One line telling the analyst which model writes answers, and where it runs."""
+    if provider == "groq":
+        return (
+            f"Answers are written by {rag_settings.groq_model} on Groq's cloud API: your "
+            "question and the retrieved incident and playbook text are sent to Groq."
+        )
+    return (
+        f"Answers are written by {rag_settings.ollama_model}, running locally in Ollama; "
+        "nothing leaves this machine."
+    )
+
+
 def confidence_band(confidence: float, threshold: float) -> str:
     if confidence >= threshold + 0.2:
         return "high"

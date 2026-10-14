@@ -76,13 +76,28 @@ connector:
   auth_token_env_var: CONTINUUM_API_TOKEN
 
 rag:
-  ollama_host: http://127.0.0.1:11434
-  ollama_model: llama3.1:8b
+  # Which LLM writes IncidentRAG's answers:
+  #   groq    Llama 3.1 8B hosted on Groq's API. Needs internet and an API
+  #           key in .env (see groq_api_key_env_var). The question and the
+  #           top retrieved chunks, incident records included, are sent to
+  #           Groq; everything else in Continuum stays on this machine.
+  #   ollama  a local model served by Ollama; nothing leaves the machine.
+  #           Needs `ollama pull <ollama_model>` once.
+  llm_provider: groq
 
   # Low on purpose: an incident-response assistant should be literal and
   # repeatable, not creative.
-  ollama_temperature: 0.1
-  ollama_timeout_seconds: 30
+  llm_temperature: 0.1
+  llm_timeout_seconds: 30
+
+  ollama_host: http://127.0.0.1:11434
+  ollama_model: llama3.1:8b
+
+  groq_base_url: https://api.groq.com/openai/v1
+  groq_model: llama-3.1-8b-instant
+  # Name of the environment variable (or .env entry) holding the Groq key.
+  # The key itself belongs in .env, never in this file.
+  groq_api_key_env_var: GROQ_API_KEY
 
   embedding_model: all-MiniLM-L6-v2
   chroma_path: data/chroma

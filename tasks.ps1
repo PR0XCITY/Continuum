@@ -196,8 +196,21 @@ function Invoke-Setup {
     & $VenvPython -m continuum.rag.embed
     Assert-LastExit 'Downloading the embedding model'
 
-    $model = & $VenvPython -c "from continuum.common.config import get_settings; print(get_settings().rag.ollama_model)"
-    if (Get-Command ollama -ErrorAction SilentlyContinue) {
+    # Prints the provider and model, and only whether a Groq key is set, never the key.
+    $code = 'import os; from continuum.common.config import get_settings as g; r = g().rag; ' +
+            'print(r.llm_provider, r.groq_model if r.llm_provider == "groq" else r.ollama_model, ' +
+            'bool(os.environ.get(r.groq_api_key_env_var)))'
+    $provider, $model, $hasKey = (& $VenvPython -c $code) -split ' '
+    if ($provider -eq 'groq') {
+        if ($hasKey -eq 'True') {
+            Write-Host "IncidentRAG will use Groq ($model); the API key is set."
+        }
+        else {
+            Write-Host ('IncidentRAG uses Groq, but GROQ_API_KEY in .env is empty. Create a key at ' +
+                        'https://console.groq.com/keys and paste it into .env.') -ForegroundColor Yellow
+        }
+    }
+    elseif (Get-Command ollama -ErrorAction SilentlyContinue) {
         $installed = (& ollama list 2>$null) -join "`n"
         if ($installed -match [regex]::Escape($model)) {
             Write-Host "Ollama model $model is installed."

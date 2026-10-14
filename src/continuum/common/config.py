@@ -74,10 +74,14 @@ class ConnectorSettings(StrictSettingsModel):
 
 
 class RagSettings(StrictSettingsModel):
+    llm_provider: Literal["ollama", "groq"]
+    llm_temperature: float = Field(ge=0.0, le=1.0)
+    llm_timeout_seconds: float = Field(gt=0.0)
     ollama_host: str = Field(min_length=1)
     ollama_model: str = Field(min_length=1)
-    ollama_temperature: float = Field(ge=0.0, le=1.0)
-    ollama_timeout_seconds: float = Field(gt=0.0)
+    groq_base_url: str = Field(min_length=1)
+    groq_model: str = Field(min_length=1)
+    groq_api_key_env_var: str = Field(min_length=1)
     embedding_model: str = Field(min_length=1)
     chroma_path: Path
     chroma_collection: str = Field(min_length=1)

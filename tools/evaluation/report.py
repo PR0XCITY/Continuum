@@ -155,8 +155,8 @@ def limitations(facts: dict, baseline: BaselineData) -> str:
 
     if not _get(facts, "llm_available", default=False):
         items.append(
-            "**IncidentRAG's answers were not evaluated in this run.** The local Ollama model "
-            "was not available, so answer quality, citation validity and the full confidence "
+            "**IncidentRAG's answers were not evaluated in this run.** The configured LLM was "
+            "not available, so answer quality, citation validity and the full confidence "
             "gate are unmeasured; only retrieval and the retrieval-only gate were."
         )
 

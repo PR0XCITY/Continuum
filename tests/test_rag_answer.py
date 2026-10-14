@@ -1,25 +1,30 @@
 """Tests for continuum.rag.answer: prompting, citation parsing, orchestration.
 
-The LLM is always mocked here (patching call_ollama or injecting a
-fake httpx.Client); no test in this file makes a real network call.
+The LLM is always mocked here (patching functions or injecting an
+httpx.MockTransport); no test in this file makes a real network call.
 """
 
 from __future__ import annotations
+
+import json
 
 import httpx
 import pytest
 from tests.conftest import sample_incident_payload
 
+from continuum.common.config import load_settings
 from continuum.common.schemas import IncidentRecord
 from continuum.connector.document import render_incident_document
 from continuum.rag import answer, ingest
 from continuum.rag.answer import (
     SYSTEM_PREAMBLE,
-    OllamaUnavailableError,
+    LlmConfig,
+    LlmUnavailableError,
     answer_question,
     build_prompt,
     extract_citations_from_text,
     generate_answer,
+    llm_config_from_settings,
     split_sentences,
 )
 from continuum.rag.confidence import ABSTENTION_MESSAGE, best_possible_confidence
@@ -143,29 +148,40 @@ def test_prompt_injection_in_an_incident_note_does_not_alter_the_instructions(
         assert "ignore all previous instructions" not in line.lower()
 
 
-# --- call_ollama / generate_answer with a mocked LLM -----------------------
+# --- LLM clients and generate_answer, with a mocked transport -------------
+
+OLLAMA = LlmConfig(provider="ollama", model="fake-model", base_url="http://fake")
+GROQ = LlmConfig(
+    provider="groq",
+    model="llama-3.1-8b-instant",
+    base_url="https://groq.test/v1",
+    api_key="gsk_test_key",
+)
 
 
-class _FakeOllamaTransport(httpx.BaseTransport):
-    def __init__(self, response_text: str, status_code: int = 200):
-        self.response_text = response_text
-        self.status_code = status_code
+def _ollama_client(response_text: str, status_code: int = 200) -> httpx.Client:
+    return httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(status_code, json={"response": response_text})
+        )
+    )
 
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
-        return httpx.Response(self.status_code, json={"response": self.response_text})
+
+def _client(handler) -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-def _fake_client(response_text: str, status_code: int = 200) -> httpx.Client:
-    return httpx.Client(transport=_FakeOllamaTransport(response_text, status_code))
+def _groq_reply(text: str):
+    return lambda request: httpx.Response(
+        200, json={"choices": [{"message": {"role": "assistant", "content": text}}]}
+    )
 
 
 def test_generate_answer_extracts_valid_citations():
     chunks = [_chunk(1, "burst injection is fast"), _chunk(2, "slowed injection is sneaky")]
-    client = _fake_client("Burst injection is very fast [1]. Slowed injection is sneakier [2].")
+    client = _ollama_client("Burst injection is very fast [1]. Slowed injection is sneakier [2].")
 
-    result = generate_answer(
-        "What is burst injection?", chunks, host="http://fake", model="fake-model", client=client
-    )
+    result = generate_answer("What is burst injection?", chunks, llm=OLLAMA, client=client)
 
     assert result.citations == [1, 2]
     assert result.invalid_citations_found == []
@@ -173,38 +189,106 @@ def test_generate_answer_extracts_valid_citations():
 
 def test_generate_answer_rejects_citation_to_a_nonexistent_chunk():
     chunks = [_chunk(1, "only one chunk here")]
-    client = _fake_client("This claim cites a real source [1] and a fake one [5].")
+    client = _ollama_client("This claim cites a real source [1] and a fake one [5].")
 
-    result = generate_answer(
-        "a question", chunks, host="http://fake", model="fake-model", client=client
-    )
+    result = generate_answer("a question", chunks, llm=OLLAMA, client=client)
 
     assert result.citations == [1]
     assert result.invalid_citations_found == [5]
 
 
-def test_generate_answer_with_no_chunks_returns_empty_without_calling_ollama():
-    result = generate_answer("a question", [], host="http://fake", model="fake-model")
+def test_generate_answer_with_no_chunks_returns_empty_without_calling_the_llm():
+    result = generate_answer("a question", [], llm=OLLAMA)
     assert result.text == ""
     assert result.citations == []
 
 
+def test_generate_answer_works_the_same_with_groq():
+    chunks = [_chunk(1, "burst injection is fast")]
+
+    result = generate_answer(
+        "q", chunks, llm=GROQ, client=_client(_groq_reply("It is fast [1]. Also [7]."))
+    )
+
+    assert result.citations == [1]
+    assert result.invalid_citations_found == [7]
+
+
 def test_call_ollama_raises_clear_error_on_connection_failure():
-    class _FailingTransport(httpx.BaseTransport):
-        def handle_request(self, request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectError("connection refused")
+    def refuse(request):
+        raise httpx.ConnectError("connection refused")
 
-    client = httpx.Client(transport=_FailingTransport())
-
-    with pytest.raises(OllamaUnavailableError):
-        answer.call_ollama("a prompt", host="http://fake", model="fake-model", client=client)
+    with pytest.raises(LlmUnavailableError, match="Could not reach Ollama"):
+        answer.call_ollama("a prompt", OLLAMA, client=_client(refuse))
 
 
 def test_call_ollama_raises_clear_error_on_non_200_status():
-    client = _fake_client("irrelevant", status_code=500)
+    with pytest.raises(LlmUnavailableError):
+        answer.call_ollama("a prompt", OLLAMA, client=_ollama_client("irrelevant", 500))
 
-    with pytest.raises(OllamaUnavailableError):
-        answer.call_ollama("a prompt", host="http://fake", model="fake-model", client=client)
+
+def test_call_groq_sends_the_prompt_model_and_key():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return _groq_reply("ok [1]")(request)
+
+    text = answer.call_groq("the prompt", GROQ, client=_client(handler))
+
+    assert text == "ok [1]"
+    request = seen[0]
+    assert str(request.url) == "https://groq.test/v1/chat/completions"
+    assert request.headers["Authorization"] == "Bearer gsk_test_key"
+    body = json.loads(request.content)
+    assert body["model"] == "llama-3.1-8b-instant"
+    assert body["messages"] == [{"role": "user", "content": "the prompt"}]
+    assert body["temperature"] == GROQ.temperature
+
+
+def test_call_groq_without_a_key_explains_how_to_set_one():
+    keyless = LlmConfig(provider="groq", model="m", base_url="https://groq.test/v1")
+
+    with pytest.raises(LlmUnavailableError, match="GROQ_API_KEY"):
+        answer.call_groq("p", keyless, client=_client(_groq_reply("never")))
+
+
+@pytest.mark.parametrize(
+    ("status", "fragment"),
+    [(401, "rejected the API key"), (429, "rate limit"), (503, "HTTP 503")],
+)
+def test_call_groq_turns_http_errors_into_readable_messages(status, fragment):
+    client = _client(lambda request: httpx.Response(status, json={"error": "x"}))
+
+    with pytest.raises(LlmUnavailableError, match=fragment) as raised:
+        answer.call_groq("p", GROQ, client=client)
+
+    assert "gsk_test_key" not in str(raised.value)
+
+
+def test_call_groq_reports_an_unreachable_api():
+    def refuse(request):
+        raise httpx.ConnectError("no network")
+
+    with pytest.raises(LlmUnavailableError, match="Could not reach Groq"):
+        answer.call_groq("p", GROQ, client=_client(refuse))
+
+
+def test_llm_config_from_settings_reads_the_key_from_the_environment():
+    settings = load_settings(env={"CONTINUUM_RAG__LLM_PROVIDER": "groq"})
+
+    groq = llm_config_from_settings(settings, env={"GROQ_API_KEY": "gsk_secret"})
+    ollama = llm_config_from_settings(
+        load_settings(env={"CONTINUUM_RAG__LLM_PROVIDER": "ollama"}), env={}
+    )
+
+    assert groq.provider == "groq"
+    assert groq.api_key == "gsk_secret"
+    assert groq.label == f"Groq (cloud API), {settings.rag.groq_model}"
+    assert "gsk_secret" not in repr(groq)
+    assert ollama.provider == "ollama"
+    assert ollama.api_key is None
+    assert ollama.label.startswith("Ollama (local)")
 
 
 # --- answer_question orchestration ------------------------------------------
@@ -221,32 +305,38 @@ class _FakeCollection:
 
 
 def test_answer_question_abstains_when_nothing_is_retrieved():
-    result = answer_question(
-        "anything", _FakeCollection(), ollama_host="http://fake", ollama_model="fake-model"
-    )
+    result = answer_question("anything", _FakeCollection(), llm=OLLAMA)
 
     assert result.abstained is True
     assert result.answer is None
+    assert result.generated_by is None
 
 
-def test_answer_question_handles_ollama_unavailable_without_crashing(monkeypatch, fake_embeddings):
+def test_answer_question_handles_an_unavailable_llm_without_crashing(monkeypatch):
     def _raise_unavailable(*_args, **_kwargs):
-        raise OllamaUnavailableError("Ollama is not running")
+        raise LlmUnavailableError("Could not reach Groq at https://groq.test/v1.")
 
     monkeypatch.setattr(answer, "generate_answer", _raise_unavailable)
     monkeypatch.setattr(
-        answer,
-        "hybrid_retrieve",
-        lambda *_a, **_k: [_chunk(1, "some retrieved text")],
+        answer, "hybrid_retrieve", lambda *_a, **_k: [_chunk(1, "some retrieved text")]
     )
 
-    result = answer_question(
-        "a question", object(), ollama_host="http://fake", ollama_model="fake-model"
-    )
+    result = answer_question("a question", object(), llm=GROQ)
 
     assert result.abstained is True
     assert result.answer is None
-    assert "Ollama" in result.message
+    assert "Groq (cloud API)" in result.message
+    assert result.citations
+
+
+def test_answer_question_records_who_wrote_the_answer(monkeypatch, fake_embeddings):
+    chunk = _chunk(1, "burst injection types keystrokes very fast")
+    monkeypatch.setattr(answer, "hybrid_retrieve", lambda *_a, **_k: [chunk])
+    client = _client(_groq_reply("Burst injection types keystrokes very fast [1]."))
+
+    result = answer_question("what is burst injection?", object(), llm=GROQ, client=client)
+
+    assert result.generated_by == "Groq (cloud API), llama-3.1-8b-instant"
 
 
 # --- refusing before the LLM when no answer could pass the gate ----------------
@@ -268,9 +358,7 @@ def test_hopeless_question_is_refused_without_calling_the_llm(monkeypatch):
         answer, "hybrid_retrieve", lambda *_a, **_k: [_weak_chunk(1), _weak_chunk(2)]
     )
 
-    result = answer_question(
-        "What is the capital of Peru?", object(), ollama_host="http://fake", ollama_model="m"
-    )
+    result = answer_question("What is the capital of Peru?", object(), llm=OLLAMA)
 
     assert result.abstained is True
     assert result.message == ABSTENTION_MESSAGE

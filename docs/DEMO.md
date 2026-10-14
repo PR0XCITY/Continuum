@@ -11,7 +11,9 @@ Do these well before the audience arrives; none of them belong in the five
 minutes.
 
 1. **Install and set up.** Follow the README: `.\tasks.ps1 setup`, then
-   `ollama pull llama3.1:8b`.
+   paste your Groq key after `GROQ_API_KEY=` in `.env`. (For a fully offline
+   demo, use `ollama pull llama3.1:8b` and `rag.llm_provider: ollama`
+   instead.)
 2. **Train on your own typing.** Run `.\tasks.ps1 record-baseline` two or
    three times on the keyboard you will demo with, about 3 minutes each.
    Include one fast session. Then run `.\tasks.ps1 train-model`.
@@ -185,6 +187,6 @@ its final log; close it when done.
 | Runtime window says `Elevated: False` and mode `lock_only` | It was not started as Administrator; run `.\tasks.ps1 stop-all`, then `.\tasks.ps1 run-all` and approve the prompt. |
 | `run-all` says no trained model | Run `.\tasks.ps1 record-baseline`, then `.\tasks.ps1 train-model`. |
 | Dashboard says it cannot reach the connector | The API window closed or failed; check `data\logs\api.log`. |
-| IncidentRAG says it could not reach Ollama | Start Ollama (it runs in the system tray) and check `ollama list` shows `llama3.1:8b`. |
+| IncidentRAG says it could not get an answer from Groq | Check the internet connection and that `GROQ_API_KEY` in `.env` is set, then restart with `stop-all` and `run-all`. With `llm_provider: ollama`, start Ollama and check `ollama list` shows the model. |
 | Your own typing got blocked | Unlock, run `.\tasks.ps1 release-all` from an elevated prompt, record another baseline session that includes fast typing, then retrain. |
 | The Digispark is not recognised at all | See the driver section in `tools/attacks/README.md`. |

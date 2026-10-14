@@ -1,24 +1,38 @@
-"""Generate a cited answer from retrieved chunks via the local Ollama API.
+"""Generate a cited answer from retrieved chunks with the configured LLM.
 
 Responsibility: build a prompt that includes only the retrieved
 chunks, numbered [1]..[k] and wrapped as quoted data so none of it
-(an incident's notes field included) can act as an instruction, call
-Ollama's local HTTP API for a completion, and parse the result into an
-answer plus a verified citation list. A citation number is only
-"real" if it refers to one of the chunks actually passed into the
-prompt; anything else is dropped from the valid citation set, not
-trusted.
+(an incident's notes field included) can act as an instruction, send
+it to the configured LLM, and parse the result into an answer plus a
+verified citation list. A citation number is only "real" if it refers
+to one of the chunks actually passed into the prompt; anything else is
+dropped from the valid citation set, not trusted.
+
+Providers (rag.llm_provider):
+    ollama  a local model served by Ollama on 127.0.0.1. Nothing leaves
+            the machine.
+    groq    a hosted model on Groq's API (default model
+            llama-3.1-8b-instant, the same Llama 3.1 8B family). The
+            question and the top retrieved chunks, incident records
+            included, are sent to Groq. The API key is read from the
+            environment variable named by rag.groq_api_key_env_var and is
+            never logged or included in any message.
+Every answer records which provider and model wrote it (generated_by),
+and the dashboard shows it.
 
 Orchestration: answer_question() ties retrieve.py, this module and
 confidence.py together into the one function the connector's /query
-route and tools/rag_cli.py both call. Ollama not running (or any other
-HTTP failure) is handled as a clean abstained RagAnswer with a clear
-message, never an unhandled exception.
+route and tools/rag_cli.py call. An unreachable or failing LLM is
+handled as a clean abstained RagAnswer with a clear message, never an
+unhandled exception.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import httpx
@@ -40,8 +54,10 @@ from continuum.rag.retrieve import DEFAULT_TOP_K, RetrievedChunk, hybrid_retriev
 
 logger = get_logger("rag.answer")
 
-DEFAULT_OLLAMA_TEMPERATURE = 0.1
-DEFAULT_OLLAMA_TIMEOUT_SECONDS = 30.0
+PROVIDER_OLLAMA = "ollama"
+PROVIDER_GROQ = "groq"
+DEFAULT_TEMPERATURE = 0.1
+DEFAULT_TIMEOUT_SECONDS = 30.0
 
 SYSTEM_PREAMBLE = (
     "You are IncidentRAG, an incident-response assistant for Continuum.\n"
@@ -60,8 +76,54 @@ _CITATION_PATTERN = re.compile(r"\[(\d+)\]")
 _SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+")
 
 
-class OllamaUnavailableError(RuntimeError):
-    """Raised when Ollama's local HTTP API cannot be reached or fails."""
+class LlmUnavailableError(RuntimeError):
+    """The configured LLM could not be reached or returned an error.
+
+    Messages are safe to show to the user: they never contain an API key.
+    """
+
+
+@dataclass(frozen=True)
+class LlmConfig:
+    provider: str
+    model: str
+    base_url: str
+    api_key: str | None = None
+    temperature: float = DEFAULT_TEMPERATURE
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+
+    @property
+    def label(self) -> str:
+        """Who wrote an answer, for display: provider, where it runs, model."""
+        if self.provider == PROVIDER_GROQ:
+            return f"Groq (cloud API), {self.model}"
+        return f"Ollama (local), {self.model}"
+
+    def __repr__(self) -> str:  # never print the key
+        return f"LlmConfig(provider={self.provider!r}, model={self.model!r})"
+
+
+def llm_config_from_settings(
+    settings: Settings, env: Mapping[str, str] | None = None
+) -> LlmConfig:
+    rag = settings.rag
+    if rag.llm_provider == PROVIDER_GROQ:
+        environment = os.environ if env is None else env
+        return LlmConfig(
+            provider=PROVIDER_GROQ,
+            model=rag.groq_model,
+            base_url=rag.groq_base_url,
+            api_key=environment.get(rag.groq_api_key_env_var) or None,
+            temperature=rag.llm_temperature,
+            timeout_seconds=rag.llm_timeout_seconds,
+        )
+    return LlmConfig(
+        provider=PROVIDER_OLLAMA,
+        model=rag.ollama_model,
+        base_url=rag.ollama_host,
+        temperature=rag.llm_temperature,
+        timeout_seconds=rag.llm_timeout_seconds,
+    )
 
 
 @dataclass(frozen=True)
@@ -83,7 +145,7 @@ def extract_citations_from_text(text: str) -> list[int]:
 
 
 def build_prompt(question: str, chunks: list[RetrievedChunk]) -> str:
-    """The full prompt sent to Ollama: preamble, numbered quoted sources, question.
+    """The full prompt sent to the LLM: preamble, numbered quoted sources, question.
 
     Every chunk's text (which, for an incident source, includes its
     notes field verbatim) is wrapped in triple-quote fences so it
@@ -103,82 +165,111 @@ def build_prompt(question: str, chunks: list[RetrievedChunk]) -> str:
     )
 
 
-def call_ollama(
-    prompt: str,
-    *,
-    host: str,
-    model: str,
-    temperature: float = DEFAULT_OLLAMA_TEMPERATURE,
-    timeout_seconds: float = DEFAULT_OLLAMA_TIMEOUT_SECONDS,
-    client: httpx.Client | None = None,
-) -> str:
-    """Call Ollama's /api/generate. Raises OllamaUnavailableError, never crashes raw."""
+def _post(llm: LlmConfig, url: str, *, client: httpx.Client | None, name: str, **kwargs):
     owns_client = client is None
     http_client = client or httpx.Client()
     try:
-        response = http_client.post(
-            f"{host.rstrip('/')}/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": temperature},
-            },
-            timeout=timeout_seconds,
-        )
+        return http_client.post(url, timeout=llm.timeout_seconds, **kwargs)
     except httpx.ConnectError as error:
-        raise OllamaUnavailableError(
-            f"Could not reach Ollama at {host}. Is it running? (ollama serve)"
+        raise LlmUnavailableError(f"Could not reach {name} at {llm.base_url}.") from error
+    except httpx.TimeoutException as error:
+        raise LlmUnavailableError(
+            f"{name} did not answer within {llm.timeout_seconds:.0f} seconds."
         ) from error
     except httpx.HTTPError as error:
-        raise OllamaUnavailableError(f"Ollama request failed: {error}") from error
+        raise LlmUnavailableError(f"{name} request failed: {error.__class__.__name__}") from error
     finally:
         if owns_client:
             http_client.close()
 
+
+def _json(response: httpx.Response, name: str) -> dict:
+    try:
+        return response.json()
+    except ValueError as error:
+        raise LlmUnavailableError(f"{name} returned a non-JSON response") from error
+
+
+def call_ollama(prompt: str, llm: LlmConfig, *, client: httpx.Client | None = None) -> str:
+    """Ollama's /api/generate on the local machine."""
+    response = _post(
+        llm,
+        f"{llm.base_url.rstrip('/')}/api/generate",
+        client=client,
+        name="Ollama",
+        json={
+            "model": llm.model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": llm.temperature},
+        },
+    )
     if response.status_code != 200:
-        raise OllamaUnavailableError(
+        raise LlmUnavailableError(
             f"Ollama returned HTTP {response.status_code}: {response.text[:200]}"
         )
+    return _json(response, "Ollama").get("response", "")
 
+
+def call_groq(prompt: str, llm: LlmConfig, *, client: httpx.Client | None = None) -> str:
+    """Groq's OpenAI-compatible chat completions endpoint."""
+    if not llm.api_key:
+        raise LlmUnavailableError(
+            "No Groq API key is set. Add GROQ_API_KEY=<your key> to .env and restart the "
+            "API, or set rag.llm_provider to ollama."
+        )
+    response = _post(
+        llm,
+        f"{llm.base_url.rstrip('/')}/chat/completions",
+        client=client,
+        name="Groq",
+        headers={"Authorization": f"Bearer {llm.api_key}"},
+        json={
+            "model": llm.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": llm.temperature,
+        },
+    )
+    if response.status_code == 401:
+        raise LlmUnavailableError("Groq rejected the API key (HTTP 401). Check GROQ_API_KEY.")
+    if response.status_code == 429:
+        raise LlmUnavailableError("Groq's rate limit was reached (HTTP 429). Try again shortly.")
+    if response.status_code != 200:
+        raise LlmUnavailableError(f"Groq returned HTTP {response.status_code}.")
     try:
-        data = response.json()
-    except ValueError as error:
-        raise OllamaUnavailableError("Ollama returned a non-JSON response") from error
+        return _json(response, "Groq")["choices"][0]["message"]["content"] or ""
+    except (KeyError, IndexError, TypeError) as error:
+        raise LlmUnavailableError("Groq returned an unexpected response shape") from error
 
-    return data.get("response", "")
+
+def call_llm(prompt: str, llm: LlmConfig, *, client: httpx.Client | None = None) -> str:
+    if llm.provider == PROVIDER_GROQ:
+        return call_groq(prompt, llm, client=client)
+    return call_ollama(prompt, llm, client=client)
 
 
 def generate_answer(
     question: str,
     chunks: list[RetrievedChunk],
     *,
-    host: str,
-    model: str,
-    temperature: float = DEFAULT_OLLAMA_TEMPERATURE,
-    timeout_seconds: float = DEFAULT_OLLAMA_TIMEOUT_SECONDS,
+    llm: LlmConfig,
     client: httpx.Client | None = None,
 ) -> GeneratedAnswer:
-    """Build the prompt, call Ollama, and parse+verify the citations in its answer."""
+    """Build the prompt, call the LLM, and parse and verify the citations in its answer."""
     if not chunks:
         return GeneratedAnswer(
             text="", citations=[], per_sentence_citations=[], invalid_citations_found=[],
             raw_text="",
         )
 
-    prompt = build_prompt(question, chunks)
-    raw_text = call_ollama(
-        prompt, host=host, model=model, temperature=temperature, timeout_seconds=timeout_seconds,
-        client=client,
-    )
+    raw_text = call_llm(build_prompt(question, chunks), llm, client=client)
 
     valid_numbers_range = range(1, len(chunks) + 1)
-    sentences = split_sentences(raw_text)
     per_sentence_citations: list[tuple[str, list[int]]] = []
     all_valid: set[int] = set()
     all_invalid: set[int] = set()
 
-    for sentence in sentences:
+    for sentence in split_sentences(raw_text):
         numbers = extract_citations_from_text(sentence)
         valid_numbers = [n for n in numbers if n in valid_numbers_range]
         invalid_numbers = [n for n in numbers if n not in valid_numbers_range]
@@ -202,10 +293,7 @@ def answer_question(
     question: str,
     collection,
     *,
-    ollama_host: str,
-    ollama_model: str,
-    ollama_temperature: float = DEFAULT_OLLAMA_TEMPERATURE,
-    ollama_timeout_seconds: float = DEFAULT_OLLAMA_TIMEOUT_SECONDS,
+    llm: LlmConfig,
     top_k: int = DEFAULT_TOP_K,
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
     similarity_floor: float = DEFAULT_SIMILARITY_FLOOR,
@@ -231,7 +319,7 @@ def answer_question(
         )
 
     # If even a perfectly supported answer could not pass the gate, refuse now:
-    # no LLM call, and the same answer whether or not Ollama is running.
+    # no LLM call, and the same answer whether or not the LLM is reachable.
     if best_possible_confidence(chunks, similarity_floor=similarity_floor) < confidence_threshold:
         return RagAnswer(
             answer=None,
@@ -242,26 +330,18 @@ def answer_question(
         )
 
     try:
-        generated = generate_answer(
-            question,
-            chunks,
-            host=ollama_host,
-            model=ollama_model,
-            temperature=ollama_temperature,
-            timeout_seconds=ollama_timeout_seconds,
-            client=client,
-        )
-    except OllamaUnavailableError as error:
-        logger.error("Ollama unavailable: %s", error)
+        generated = generate_answer(question, chunks, llm=llm, client=client)
+    except LlmUnavailableError as error:
+        logger.error("LLM unavailable (%s): %s", llm.provider, error)
         return RagAnswer(
             answer=None,
             confidence=0.0,
             abstained=True,
             citations=build_citations(chunks),
-            message=f"IncidentRAG could not reach Ollama: {error}",
+            message=f"IncidentRAG could not get an answer from {llm.label}: {error}",
         )
 
-    return gate_and_build_response(
+    result = gate_and_build_response(
         chunks,
         generated.text,
         generated.per_sentence_citations,
@@ -269,17 +349,15 @@ def answer_question(
         similarity_floor=similarity_floor,
         support_similarity_floor=support_similarity_floor,
     )
+    return dataclasses.replace(result, generated_by=llm.label)
 
 
 def answer_question_with_settings(question: str, collection, settings: Settings) -> RagAnswer:
-    """Convenience wrapper: pulls every tunable out of settings.rag."""
+    """answer_question with every tunable, and the LLM, taken from settings."""
     return answer_question(
         question,
         collection,
-        ollama_host=settings.rag.ollama_host,
-        ollama_model=settings.rag.ollama_model,
-        ollama_temperature=settings.rag.ollama_temperature,
-        ollama_timeout_seconds=settings.rag.ollama_timeout_seconds,
+        llm=llm_config_from_settings(settings),
         top_k=settings.rag.top_k,
         confidence_threshold=settings.rag.confidence_threshold,
         similarity_floor=settings.rag.min_similarity,

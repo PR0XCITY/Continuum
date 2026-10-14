@@ -252,3 +252,16 @@ def test_client_reports_an_unreachable_connector():
 
     with pytest.raises(ApiError, match="Cannot reach the connector"):
         _client(handler).health()
+
+
+def test_llm_disclosure_says_where_answers_are_written():
+    class _Rag:
+        groq_model = "llama-3.1-8b-instant"
+        ollama_model = "llama3.1:8b"
+
+    groq = helpers.llm_disclosure("groq", _Rag())
+    local = helpers.llm_disclosure("ollama", _Rag())
+
+    assert "Groq's cloud API" in groq and "sent to Groq" in groq
+    assert "llama-3.1-8b-instant" in groq
+    assert "locally in Ollama" in local and "nothing leaves this machine" in local

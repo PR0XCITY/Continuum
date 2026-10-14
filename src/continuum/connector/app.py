@@ -46,7 +46,7 @@ from continuum.connector.document import (
 )
 from continuum.connector.middleware import InMemoryRateLimitMiddleware, RequestSizeLimitMiddleware
 from continuum.rag import ingest as rag_ingest
-from continuum.rag.answer import answer_question
+from continuum.rag.answer import answer_question_with_settings
 
 logger = get_logger("connector")
 
@@ -135,6 +135,9 @@ class QueryResponse(BaseModel):
     citations: list[QueryCitation]
     abstained: bool
     message: str
+    # Which provider and model wrote the answer (for example
+    # "Groq (cloud API), llama-3.1-8b-instant"); None when no LLM was called.
+    generated_by: str | None = None
 
 
 class HealthResponse(BaseModel):
@@ -377,18 +380,11 @@ def create_app(
 
     @app.post("/query", response_model=QueryResponse, dependencies=[auth])
     def query(request: QueryRequest) -> QueryResponse:
-        result = answer_question(
-            request.question,
-            rag_collection,
-            ollama_host=resolved_settings.rag.ollama_host,
-            ollama_model=resolved_settings.rag.ollama_model,
-            ollama_temperature=resolved_settings.rag.ollama_temperature,
-            ollama_timeout_seconds=resolved_settings.rag.ollama_timeout_seconds,
-            top_k=resolved_settings.rag.top_k,
-            confidence_threshold=resolved_settings.rag.confidence_threshold,
-            similarity_floor=resolved_settings.rag.min_similarity,
+        result = answer_question_with_settings(
+            request.question, rag_collection, resolved_settings
         )
         return QueryResponse(
+            generated_by=result.generated_by,
             answer=result.answer,
             confidence=result.confidence,
             citations=[

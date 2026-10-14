@@ -280,3 +280,13 @@ def test_a_crashing_section_is_reported_and_fails_the_run(tmp_path, monkeypatch)
 
     assert status == 1
     assert "This section failed" in output.read_text(encoding="utf-8")
+
+
+def test_check_llm_needs_a_groq_key_but_never_calls_the_api():
+    from continuum.rag.answer import LlmConfig
+
+    keyless = LlmConfig(provider="groq", model="m", base_url="https://groq.test/v1")
+    keyed = LlmConfig(provider="groq", model="m", base_url="https://groq.test/v1", api_key="k")
+
+    assert rag_eval.check_llm(keyless)[0] is False
+    assert rag_eval.check_llm(keyed) == (True, "Groq (cloud API) with model `m`")

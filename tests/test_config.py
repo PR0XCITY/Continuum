@@ -25,6 +25,8 @@ def test_load_settings_reads_the_real_default_config(tmp_path):
     assert settings.response.auto_release_timeout_seconds == 600
     assert settings.connector.port == 8731
     assert settings.rag.ollama_model == "llama3.1:8b"
+    assert settings.rag.llm_provider == "groq"
+    assert settings.rag.groq_model == "llama-3.1-8b-instant"
     assert settings.dashboard.port == 8501
     assert settings.logging.level == "INFO"
 

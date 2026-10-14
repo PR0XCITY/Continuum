@@ -9,7 +9,7 @@ gate and POST /query.
 
 Mocked, and nothing else: the Win32 layer (LockWorkStation, pnputil, the
 device status check, the elevation check, toast notifications) and the
-LLM (continuum.rag.answer.call_ollama).
+LLM (continuum.rag.answer.call_llm, whichever provider is configured).
 
 Needs the embedding model in the local cache, which setup downloads
 (python -m continuum.rag.embed); the test is skipped, not failed, without
@@ -194,7 +194,7 @@ def test_burst_injection_is_blocked_recorded_ingested_and_retrievable(
         # 6. /query answers from it, with the LLM mocked and the prompt inspected.
         prompts: list[str] = []
 
-        def fake_ollama(prompt: str, **_kwargs) -> str:
+        def fake_llm(prompt: str, _llm, **_kwargs) -> str:
             prompts.append(prompt)
             numbers = re.findall(r"^\[(\d+)\] \(incident, Incident " + incident_id, prompt, re.M)
             source = numbers[0] if numbers else "1"
@@ -203,7 +203,7 @@ def test_burst_injection_is_blocked_recorded_ingested_and_retrievable(
                 f"the workstation was locked and the device disabled [{source}]."
             )
 
-        monkeypatch.setattr(answer_module, "call_ollama", fake_ollama)
+        monkeypatch.setattr(answer_module, "call_llm", fake_llm)
         response = client.post(
             "/query",
             json={"question": f"What happened in incident {incident_id}?"},

@@ -5,7 +5,7 @@ contain the device, record the incident, and answer questions about it.**
 
 ![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB)
 ![Platform Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)
-![Runs fully offline](https://img.shields.io/badge/runs-fully%20local-346538)
+![LLM: Groq or local Ollama](https://img.shields.io/badge/LLM-Groq%20or%20local%20Ollama-346538)
 
 Devices such as the USB Rubber Ducky, Digispark and Bash Bunny pretend to be a keyboard and
 type a pre-recorded attack faster than any person. Windows trusts them like any other
@@ -18,7 +18,10 @@ looking human it:
    incident history and response playbooks, with citations, or an explicit "not enough
    evidence" when the records do not support an answer (IncidentRAG).
 
-Everything runs on the local machine: no cloud services, no telemetry, and a local LLM.
+Detection, response, incident storage, search and the dashboard all run on the local machine,
+with no telemetry. By default IncidentRAG's answers are written by Llama 3.1 8B on Groq's
+cloud API, which receives the question and the retrieved incident and playbook text; set
+`rag.llm_provider: ollama` to run the same model locally and keep everything offline.
 Continuum never records which keys were pressed, only their timing.
 
 Built as a college software engineering project.
@@ -36,7 +39,7 @@ flowchart LR
     BAH -->|POST /incidents| API[Connector API<br/>FastAPI + SQLite]
     API -->|ingest queue| RAG[Retrieval Engine<br/>ChromaDB + BM25]
     RAG --> CS[Confidence Scorer]
-    RAG <--> LLM[Ollama<br/>127.0.0.1]
+    RAG <--> LLM[Groq API, or<br/>local Ollama]
     DASH[Streamlit Dashboard] -->|bearer token| API
 ```
 
@@ -51,7 +54,7 @@ flowchart LR
 - **Connector API:** a local FastAPI service, with bearer-token authentication even on
   localhost, that validates and stores every incident.
 - **Retrieval Engine and Confidence Scorer:** hybrid retrieval over incidents and playbooks,
-  a cited answer from a local model, and a confidence gate that refuses when the evidence is
+  a cited answer from Llama 3.1 8B (Groq by default, or local Ollama), and a confidence gate that refuses when the evidence is
   weak.
 - **Dashboard:** live device status, incidents, Ask IncidentRAG, calibration and settings.
 
@@ -75,8 +78,10 @@ detector figures there come from simulated typing until you record your own base
 
 - Windows 10 or 11, 64-bit, with an account that can approve an administrator (UAC)
   prompt.
-- About 6 GB of free disk space (Python packages, the embedding model and the local LLM).
-- 8 GB of RAM or more, for the local LLM.
+- About 2 GB of free disk space for the Python packages and embedding model (another 5 GB
+  for the optional local Ollama model).
+- A free Groq API key and an internet connection for IncidentRAG's answers, or 8 GB of RAM
+  for the local Ollama model instead.
 - For the hardware demo: a Digispark ATtiny85 board and a second keyboard. A laptop's
   built-in keyboard counts.
 
@@ -88,10 +93,12 @@ detector figures there come from simulated typing until you record your own base
 | --- | --- | --- |
 | Python 3.12 (64-bit) | [python.org/downloads/windows](https://www.python.org/downloads/windows/) | Tick **Add python.exe to PATH**. Check with `py -3.12 --version`. |
 | Git | [git-scm.com/download/win](https://git-scm.com/download/win) | Default options are fine. |
-| Ollama | [ollama.com/download](https://ollama.com/download) | Runs in the system tray and starts at logon. |
+| Groq API key | [console.groq.com/keys](https://console.groq.com/keys) | Free. Used by default for IncidentRAG's answers. |
+| Ollama (optional) | [ollama.com/download](https://ollama.com/download) | Only for fully offline answers; runs in the system tray. |
 | Arduino IDE 2.x | [arduino.cc/en/software](https://www.arduino.cc/en/software) | Only needed to flash the Digispark. |
 
-Then download the local model IncidentRAG uses, about 4.9 GB:
+Only if you want fully offline answers instead of Groq: download the local model (about
+4.9 GB) and set `rag.llm_provider: ollama` in `config/local.yaml`.
 
 ```powershell
 ollama pull llama3.1:8b
@@ -113,7 +120,10 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned   # once per user, if script
 - creates `.venv` with Python 3.12 and installs the pinned dependencies,
 - creates `.env` with a new random API token (an existing `.env` is never touched),
 - downloads the embedding model once, so everything after this runs offline,
-- checks that Ollama and the model are installed.
+- checks that the configured LLM is ready: a Groq key in `.env`, or the Ollama model.
+
+Then open `.env` and paste your Groq key after `GROQ_API_KEY=`. `.env` is gitignored and the
+key is never logged.
 
 Clone into a short folder path such as `C:\src\Continuum`. PyTorch, which
 sentence-transformers needs, installs files nested deeply enough to pass Windows' 260
@@ -227,8 +237,11 @@ after a change.
 | `connector.host`, `connector.port` | `127.0.0.1`, `8731` | Where the API listens. |
 | `connector.database_path` | `data/db/continuum.sqlite3` | The incident database. |
 | `connector.auth_token_env_var` | `CONTINUUM_API_TOKEN` | Which environment variable (or `.env` entry) holds the bearer token. |
-| `rag.ollama_host`, `rag.ollama_model` | `http://127.0.0.1:11434`, `llama3.1:8b` | The local LLM. |
-| `rag.ollama_temperature`, `rag.ollama_timeout_seconds` | `0.1`, `30` | Generation settings. |
+| `rag.llm_provider` | `groq` | Which LLM writes answers: `groq` (cloud API) or `ollama` (local, offline). |
+| `rag.groq_model`, `rag.groq_base_url` | `llama-3.1-8b-instant`, `https://api.groq.com/openai/v1` | The Groq model and endpoint. |
+| `rag.groq_api_key_env_var` | `GROQ_API_KEY` | Which `.env` entry holds the Groq key. |
+| `rag.ollama_host`, `rag.ollama_model` | `http://127.0.0.1:11434`, `llama3.1:8b` | The local LLM, when `llm_provider` is `ollama`. |
+| `rag.llm_temperature`, `rag.llm_timeout_seconds` | `0.1`, `30` | Generation settings, either provider. |
 | `rag.embedding_model` | `all-MiniLM-L6-v2` | The sentence-transformers model for retrieval. |
 | `rag.chroma_path`, `rag.chroma_collection` | `data/chroma`, `continuum_incidents` | The vector store. |
 | `rag.corpus_path` | `data/corpus` | The playbooks IncidentRAG may cite. |
@@ -274,8 +287,12 @@ calibrated threshold; use `sensitivity` to tune it.
   model as quoted data, never as instructions.
 - **Honest answers.** IncidentRAG cites numbered sources, checks every citation, and refuses
   ("insufficient evidence") rather than guessing.
-- **Local only.** The API and dashboard bind to `127.0.0.1`, the LLM is local, and ChromaDB
-  and Streamlit telemetry are switched off. Untrusted text is HTML-escaped in the dashboard,
+- **Local by default, with one disclosed exception.** The API and dashboard bind to
+  `127.0.0.1`, and ChromaDB and Streamlit telemetry are switched off. With the default
+  `llm_provider: groq`, IncidentRAG sends the question and the top 5 retrieved chunks
+  (incident records and playbooks) to Groq over HTTPS to write the answer; the dashboard says
+  so on the Ask page and labels every answer with the model that wrote it. Choose `ollama` to
+  keep that local too. Untrusted text is HTML-escaped in the dashboard,
   so it cannot load remote content.
 
 ## Known limitations
