@@ -141,17 +141,25 @@ on instead: every `just` recipe calls the matching `tasks.ps1` target.
 
 ### 3. Teach it your typing
 
-Continuum learns what normal typing looks like on your keyboard. Record two or three
-sessions of about 3 minutes each, typing your own text, at least one of them deliberately
-fast. Then train:
+Continuum learns what normal typing looks like on your keyboard, from the dashboard:
 
-```powershell
-.\tasks.ps1 record-baseline     # repeat 2 or 3 times
-.\tasks.ps1 train-model
-```
+1. Start everything with `.\tasks.ps1 run-all` (see [Running](#running)). Without a trained
+   model the runtime starts in recording-only mode: it captures timing, but protects nothing
+   yet.
+2. Open the dashboard's **Train** page at http://127.0.0.1:8501. Click **Start recording**,
+   type the paragraph shown at your usual pace, then click **Stop and save**. The page shows
+   your words per minute and accuracy as you type.
+3. Repeat with the next paragraph until the baseline reaches about 150 windows (around five
+   paragraphs; type one of them faster than usual). Training is possible from 60.
+4. Click **Train model**. The runtime picks the new model up within a few seconds, with no
+   restart, and protection starts.
 
-Only timing statistics are saved, to `data\baselines\<you>.npz`. The text you type is
-never read.
+The typing is recorded by the runtime through the same Raw Input capture detection uses, so
+the model learns from exactly the signal it is later judged on, and from the physical
+keyboard you used. Only timing statistics are saved, to `data\baselines\<you>.npz`; what you
+type in the page never leaves your browser. Detection is paused while a session records.
+
+`.\tasks.ps1 record-baseline` and `.\tasks.ps1 train-model` do the same from a terminal.
 
 ### 4. Check everything works
 
@@ -183,7 +191,6 @@ Other commands:
 
 | Command | What it does |
 | --- | --- |
-| `.\tasks.ps1 seed-demo` | Loads 200 synthetic incidents through the API, so the dashboard and IncidentRAG have history to work with. The API must be running. |
 | `.\tasks.ps1 release-all` | The kill switch: re-enables every device Continuum disabled. Run it from an Administrator PowerShell. |
 | `.\tasks.ps1 evaluate` | Reruns every measurement and regenerates `docs/EVALUATION.md`. |
 

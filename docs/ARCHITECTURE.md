@@ -233,7 +233,7 @@ wrote it, and the dashboard shows it.
 
 `src/continuum/dashboard/`: `app.py`, `api.py`, `helpers.py`, `style.py`.
 
-A Streamlit app on `127.0.0.1:8501` with five pages:
+A Streamlit app on `127.0.0.1:8501` with six pages:
 
 - **Live status:** runtime heartbeat, elevation, mode, attached keyboards
   with verdict badges, and a rolling 60-second inter-key interval chart.
@@ -241,8 +241,35 @@ A Streamlit app on `127.0.0.1:8501` with five pages:
   "Ask IncidentRAG about this".
 - **Ask IncidentRAG:** answers with a confidence meter and citations, or an
   amber "Insufficient evidence" card.
+- **Train:** records the analyst's typing baseline and trains the model
+  (see below).
 - **Calibration and model.**
 - **Settings.**
+
+### Training from the dashboard
+
+The Train page shows a paragraph (each playbook's "When to use" section)
+and a box to type it in. Speed and accuracy are computed in the browser
+and shown there only; the page has no network code, so the text never
+leaves the browser. The timing itself is recorded by the runtime
+(`src/continuum/recording.py`), through the same Raw Input capture
+detection uses, so the model learns from the exact signal it is later
+judged on and from the physical keyboard that typed:
+
+1. `POST /training/start` adds a `baseline_sessions` row and a
+   `baseline_start` command. The runtime polls commands every second,
+   starts recording, and pauses detection, so training typing can never
+   trigger a lock.
+2. While recording, the runtime keeps the session's key-press count
+   current, and the page shows it.
+3. `POST /training/stop` sends `baseline_stop`. The runtime turns the
+   typing into feature windows and appends them to the baseline file,
+   then marks the session saved, or failed with a reason (too little
+   continuous typing, or a different keyboard than the baseline's).
+4. `POST /training/train` fits and calibrates the model in the connector,
+   exactly as `tools/train_model.py` does. The runtime notices the new
+   model file within 5 seconds and starts protecting with it; until a
+   model exists it runs in recording-only mode.
 
 The dashboard talks only to the connector API, with the bearer token. It
 never opens the database or the vector store. Everything that came from
