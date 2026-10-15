@@ -55,10 +55,6 @@ stop-all:
 status:
     {{tasks}} status
 
-# Load 200 synthetic incidents through the API.
-seed-demo *args:
-    {{tasks}} seed-demo {{args}}
-
 # Re-enable every device Continuum disabled (elevated prompt required).
 release-all:
     {{tasks}} release-all

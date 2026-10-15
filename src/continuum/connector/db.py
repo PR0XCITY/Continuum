@@ -21,6 +21,16 @@ Shared-file contract with continuum.runtime (see that module):
                      and on shutdown: elevation, response mode, model,
                      threshold and the attached keyboards. GET /runtime
                      reads it back.
+    baseline_sessions
+                     one row per typing-baseline recording session from
+                     the dashboard's Train page. POST /training/start
+                     inserts it ("requested") plus a baseline_start
+                     command; continuum.runtime records the session's
+                     key timings (never key identity) through Raw
+                     Input, keeps "presses" current while recording,
+                     and on baseline_stop saves the windows to the
+                     baseline file and marks the row "saved" or
+                     "failed" with a message.
 
 These tables are created here with SQLAlchemy and written there with
 raw sqlite3 against the exact same column names; if this schema
@@ -44,6 +54,18 @@ COMMANDS_TABLE = "commands"
 LIVE_SNAPSHOTS_TABLE = "live_snapshots"
 RUNTIME_STATUS_TABLE = "runtime_status"
 RUNTIME_STATUS_ROW_ID = 1
+BASELINE_SESSIONS_TABLE = "baseline_sessions"
+
+COMMAND_UNBLOCK = "unblock"
+COMMAND_BASELINE_START = "baseline_start"
+COMMAND_BASELINE_STOP = "baseline_stop"
+
+SESSION_REQUESTED = "requested"
+SESSION_RECORDING = "recording"
+SESSION_SAVED = "saved"
+SESSION_FAILED = "failed"
+SESSION_CANCELLED = "cancelled"
+ACTIVE_SESSION_STATES = (SESSION_REQUESTED, SESSION_RECORDING)
 
 
 class Base(DeclarativeBase):
@@ -99,6 +121,20 @@ class LiveSnapshotRow(Base):
     anomaly_score: Mapped[float] = mapped_column(Float)
     threshold: Mapped[float] = mapped_column(Float)
     features_json: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[str] = mapped_column(String(64))
+
+
+class BaselineSessionRow(Base):
+    __tablename__ = BASELINE_SESSIONS_TABLE
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    state: Mapped[str] = mapped_column(String(16), index=True)
+    paragraph_index: Mapped[int] = mapped_column(Integer, default=0)
+    device_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    presses: Mapped[int] = mapped_column(Integer, default=0)
+    windows_saved: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(String(300), default="")
+    created_at: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[str] = mapped_column(String(64))
 
 
@@ -274,6 +310,38 @@ def get_live_snapshots(session: Session) -> list[LiveSnapshotRow]:
 
 def get_runtime_status(session: Session) -> RuntimeStatusRow | None:
     return session.get(RuntimeStatusRow, RUNTIME_STATUS_ROW_ID)
+
+
+# --- baseline recording sessions (shared with continuum.runtime) --------------
+
+
+def latest_baseline_session(session: Session) -> BaselineSessionRow | None:
+    stmt = select(BaselineSessionRow).order_by(BaselineSessionRow.id.desc()).limit(1)
+    return session.execute(stmt).scalar_one_or_none()
+
+
+def count_saved_baseline_sessions(session: Session) -> int:
+    stmt = select(func.count()).select_from(BaselineSessionRow).where(
+        BaselineSessionRow.state == SESSION_SAVED
+    )
+    return session.execute(stmt).scalar_one()
+
+
+def create_baseline_session(session: Session, *, paragraph_index: int) -> BaselineSessionRow:
+    now = datetime.now(UTC).isoformat()
+    row = BaselineSessionRow(
+        state=SESSION_REQUESTED,
+        paragraph_index=paragraph_index,
+        presses=0,
+        windows_saved=0,
+        message="",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(row)
+    session.flush()
+    insert_command(session, command_type=COMMAND_BASELINE_START, device_id=str(row.id))
+    return row
 
 
 # --- stats ----------------------------------------------------------------

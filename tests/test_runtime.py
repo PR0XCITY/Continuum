@@ -764,3 +764,95 @@ def test_update_live_snapshot_is_a_safe_no_op_without_a_connector_db(tmp_path):
     )
 
     runtime.update_live_snapshot(missing_path, DEVICE_ID, result)  # must not raise
+
+
+# --- training: recording pauses detection; a model is optional and reloadable --
+
+
+def _process_all(events, *, scorer, recorder, tmp_path, capture=None):
+    blocker = DeviceBlocker(dry_run=True, disabled_devices_path=tmp_path / "disabled.json")
+    outbox = runtime.IncidentOutbox(tmp_path / "outbox.sqlite3")
+    client = httpx.Client()
+    buffers: dict = {}
+    try:
+        for event in events:
+            runtime.process_event(
+                event,
+                device_buffers=buffers,
+                pending_since={},
+                scorer=scorer,
+                capture=capture or _FakeCapture([_device()]),
+                blocker=blocker,
+                outbox=outbox,
+                http_client=client,
+                base_url="http://127.0.0.1:1",
+                token="t",
+                effective_mode="lock_and_disable",
+                allowlist=[],
+                connector_db_path=tmp_path / "connector.sqlite3",
+                recorder=recorder,
+            )
+        return buffers, len(outbox)
+    finally:
+        client.close()
+        outbox.close()
+
+
+class _AlwaysFlag:
+    version = "test"
+    baseline_device_id = "elsewhere"
+    threshold = 0.0
+
+    def score_one(self, features):
+        return 1.0
+
+
+def test_recording_collects_typing_and_never_scores_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, "lock_workstation", lambda: pytest.fail("must not lock"))
+    recorder = runtime.BaselineRecorder()
+    recorder.start(7)
+    events = human_like_events(DEVICE_ID, 80, rng=np.random.default_rng(5))
+
+    buffers, posted = _process_all(
+        events, scorer=Scorer(_AlwaysFlag()), recorder=recorder, tmp_path=tmp_path
+    )
+
+    assert recorder.main_device() == (DEVICE_ID, 80)
+    assert buffers == {}
+    assert posted == 0
+
+
+def test_without_a_model_events_are_ignored(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, "lock_workstation", lambda: pytest.fail("must not lock"))
+    events = human_like_events(DEVICE_ID, 80, rng=np.random.default_rng(6))
+
+    buffers, posted = _process_all(
+        events, scorer=None, recorder=runtime.BaselineRecorder(), tmp_path=tmp_path
+    )
+
+    assert buffers == {}
+    assert posted == 0
+
+
+def test_reload_model_if_changed_loads_new_and_changed_files_only(tmp_path):
+    from continuum.detection.features import FEATURE_NAMES
+    from continuum.detection.model import fit_and_calibrate
+
+    path = tmp_path / "me.joblib"
+    assert runtime.reload_model_if_changed(path, None) == (None, None)
+
+    matrix = np.random.default_rng(0).normal(size=(40, len(FEATURE_NAMES)))
+    fit_and_calibrate(matrix, feature_names=list(FEATURE_NAMES), baseline_device_id="k").save(path)
+    model, mtime = runtime.reload_model_if_changed(path, None)
+    assert model is not None and mtime is not None
+
+    assert runtime.reload_model_if_changed(path, mtime) == (None, mtime)
+
+
+def test_an_unreadable_model_is_reported_once_not_retried(tmp_path):
+    path = tmp_path / "me.joblib"
+    path.write_bytes(b"not a model")
+
+    model, mtime = runtime.reload_model_if_changed(path, None)
+    assert model is None and mtime is not None
+    assert runtime.reload_model_if_changed(path, mtime) == (None, mtime)

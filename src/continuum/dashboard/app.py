@@ -23,6 +23,7 @@ from typing import Any
 import altair as alt
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from continuum.common.config import get_settings
 from continuum.dashboard import helpers, style
@@ -33,13 +34,15 @@ from continuum.detection.scorer import (
     MIN_SENSITIVITY,
     threshold_offset_for_sensitivity,
 )
+from continuum.rag.ingest import resolve_corpus_path
 
 PAGE_LIVE = "Live status"
 PAGE_INCIDENTS = "Incidents"
 PAGE_ASK = "Ask IncidentRAG"
 PAGE_CALIBRATION = "Calibration and model"
 PAGE_SETTINGS = "Settings"
-PAGES = (PAGE_LIVE, PAGE_INCIDENTS, PAGE_ASK, PAGE_CALIBRATION, PAGE_SETTINGS)
+PAGE_TRAIN = "Train"
+PAGES = (PAGE_LIVE, PAGE_INCIDENTS, PAGE_ASK, PAGE_TRAIN, PAGE_CALIBRATION, PAGE_SETTINGS)
 
 LIVE_REFRESH_SECONDS = 2
 DEFAULT_INCIDENT_WINDOW_DAYS = 90
@@ -214,12 +217,14 @@ def _live_panel(client: ConnectorClient) -> None:
     )
 
     threshold = runtime.get("threshold")
+    if runtime.get("model_version") == "none":
+        threshold_value, threshold_hint = "not trained", "Record your typing on the Train page"
+    else:
+        threshold_value = "unknown" if threshold is None else f"{threshold:.4f}"
+        sensitivity = runtime.get("sensitivity")
+        threshold_hint = f"sensitivity {sensitivity}" if sensitivity else ""
     columns[3].markdown(
-        style.stat_card(
-            "Threshold",
-            "unknown" if threshold is None else f"{threshold:.4f}",
-            f"sensitivity {runtime['sensitivity']}" if runtime.get("sensitivity") else "",
-        ),
+        style.stat_card("Threshold", threshold_value, threshold_hint),
         unsafe_allow_html=True,
     )
 
@@ -723,6 +728,147 @@ def page_calibration(client: ConnectorClient) -> None:
         st.caption("No baselines in data/baselines.")
 
 
+# --- Train page ---------------------------------------------------------------------
+
+
+@st.fragment(run_every=2)
+def _training_panel(client: ConnectorClient, paragraph_index: int) -> None:
+    try:
+        status = client.training()
+    except ApiError as error:
+        _error_card(error)
+        return
+
+    baseline = status["baseline"]
+    model = status["model"]
+    session = status["session"]
+    minimum, recommended = status["minimum_windows"], status["recommended_windows"]
+    active = bool(session) and session["state"] in ("requested", "recording")
+
+    # A new saved session means a new paragraph: refresh the whole page once.
+    seen = st.session_state.get("train_saved_seen")
+    st.session_state["train_saved_seen"] = status["saved_sessions"]
+    if seen is not None and status["saved_sessions"] != seen:
+        st.rerun(scope="app")
+
+    columns = st.columns(3)
+    columns[0].markdown(
+        style.stat_card(
+            "Runtime",
+            "Running" if status["runtime_running"] else "Not running",
+            "Records your typing through Raw Input" if status["runtime_running"]
+            else "Start it with .\\tasks.ps1 run-all",
+        ),
+        unsafe_allow_html=True,
+    )
+    columns[1].markdown(
+        style.stat_card(
+            "Baseline",
+            f"{baseline['n_windows']} of {recommended} windows",
+            helpers.baseline_progress(baseline["n_windows"], minimum, recommended),
+        ),
+        unsafe_allow_html=True,
+    )
+    columns[2].markdown(
+        style.stat_card(
+            "Model",
+            "Trained" if model["exists"] else "Not trained",
+            model["version"] or "Protection starts once a model is trained",
+        ),
+        unsafe_allow_html=True,
+    )
+
+    if not status["runtime_running"]:
+        _html(
+            style.card(
+                style.text_block(
+                    "Recording needs the HID Firewall runtime, because it captures your typing "
+                    "from the physical keyboard exactly the way detection does. Start it with "
+                    ".\\tasks.ps1 run-all and approve the administrator prompt."
+                ),
+                title="Runtime not running",
+                amber=True,
+            )
+        )
+
+    if active:
+        if session["state"] == "requested":
+            st.caption("Waiting for the runtime to start recording...")
+        else:
+            st.markdown(
+                f"**Recording.** {session['presses']} key presses so far. Type the paragraph "
+                "below at your usual pace, then stop and save. Detection is paused while you "
+                "record."
+            )
+        if st.button("Stop and save", type="primary", key="train_stop"):
+            client.training_stop()
+            st.rerun(scope="fragment")
+    else:
+        if session and session["state"] == "saved":
+            st.success(f"Last session saved: {session['windows_saved']} windows added.")
+        elif session and session["state"] in ("failed", "cancelled") and session["message"]:
+            st.warning(session["message"])
+        if st.button(
+            "Start recording",
+            type="primary",
+            key="train_start",
+            disabled=not status["runtime_running"],
+        ):
+            client.training_start(paragraph_index)
+            st.rerun(scope="fragment")
+
+    st.divider()
+    left, right = st.columns([1, 1])
+    can_train = baseline["n_windows"] >= minimum and not active
+    if left.button("Train model", key="train_model", disabled=not can_train,
+                   use_container_width=True):
+        with st.spinner("Training on your baseline"):
+            try:
+                result = client.training_train()
+            except ApiError as error:
+                st.error(str(error))
+            else:
+                st.success(
+                    f"Model {result['model']['version']} trained. The runtime starts using it "
+                    "within a few seconds."
+                )
+    with right.popover("Start over", use_container_width=True, disabled=active):
+        st.write(
+            "Delete the recorded baseline and record from scratch, for example after "
+            "switching keyboards. A trained model keeps protecting you until you retrain."
+        )
+        if st.button("Delete baseline", key="train_reset"):
+            client.training_reset()
+            st.rerun(scope="fragment")
+
+
+def page_train(client: ConnectorClient) -> None:
+    _page_header(
+        "Train",
+        "Teach Continuum your typing rhythm. Start recording, type the paragraph at your usual "
+        "pace on the keyboard you normally use, then stop and save. Repeat with the next "
+        "paragraph until the baseline is large enough, then train.",
+    )
+    st.caption(
+        "Only key timing is recorded, through the same Raw Input capture detection uses; never "
+        "which keys you press. What you type in the box stays in this browser."
+    )
+    try:
+        saved_sessions = client.training()["saved_sessions"]
+    except ApiError as error:
+        _error_card(error)
+        return
+    passages = helpers.typing_passages(resolve_corpus_path(get_settings()))
+    paragraph_index, passage = helpers.passage_for_session(passages, saved_sessions)
+
+    _training_panel(client, paragraph_index)
+
+    st.subheader(f"Paragraph {paragraph_index + 1} of {len(passages)}")
+    if saved_sessions == 2:
+        st.caption("For this one, type faster than usual: fast typing is still you.")
+    components.html(style.typing_box(passage), height=390)
+
+
 # --- page 5: settings ---------------------------------------------------------------
 
 
@@ -896,6 +1042,7 @@ def main() -> None:
         PAGE_ASK: page_ask,
         PAGE_CALIBRATION: page_calibration,
         PAGE_SETTINGS: page_settings,
+        PAGE_TRAIN: page_train,
     }
     try:
         renderers[page](client)

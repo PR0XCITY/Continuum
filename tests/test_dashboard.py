@@ -265,3 +265,49 @@ def test_llm_disclosure_says_where_answers_are_written():
     assert "Groq's cloud API" in groq and "sent to Groq" in groq
     assert "llama-3.1-8b-instant" in groq
     assert "locally in Ollama" in local and "nothing leaves this machine" in local
+
+
+# --- Train page ----------------------------------------------------------------
+
+
+def test_typing_passages_take_each_playbooks_when_to_use_section(tmp_path):
+    (tmp_path / "a.md").write_text(
+        "# A\n\n## When to use\n\nUse **this** when\nthe `thing` happens.\n\n## Steps\n\n1. x\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "b.md").write_text("# B\n\nNo such section.\n", encoding="utf-8")
+
+    assert helpers.typing_passages(tmp_path) == ["Use this when the thing happens."]
+
+
+def test_the_real_corpus_gives_a_passage_per_playbook():
+    from pathlib import Path
+
+    corpus = Path(__file__).resolve().parents[1] / "data" / "corpus"
+    passages = helpers.typing_passages(corpus)
+
+    assert len(passages) == len(list(corpus.rglob("*.md")))
+    assert all(len(p.split()) >= 40 for p in passages)
+
+
+def test_passage_for_session_cycles_through_passages():
+    passages = ["one", "two", "three"]
+
+    assert helpers.passage_for_session(passages, 0) == (0, "one")
+    assert helpers.passage_for_session(passages, 4) == (1, "two")
+    assert helpers.passage_for_session([], 2) == (0, "")
+
+
+def test_baseline_progress_wording():
+    assert "60 more windows needed" in helpers.baseline_progress(0, 60, 150)
+    assert "Enough to train" in helpers.baseline_progress(90, 60, 150)
+    assert "Train the model" in helpers.baseline_progress(150, 60, 150)
+
+
+def test_typing_box_escapes_the_passage_and_has_no_network_code():
+    markup = style.typing_box('<img src="http://evil/x.png"> type this')
+
+    assert "<img" not in markup
+    assert "&lt;img" in markup
+    for network_call in ("fetch(", "XMLHttpRequest", "sendBeacon", "WebSocket", "postMessage"):
+        assert network_call not in markup

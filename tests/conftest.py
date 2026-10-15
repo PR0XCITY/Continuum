@@ -47,6 +47,7 @@ def connector_paths(tmp_path):
         "model_dir": tmp_path / "models",
         "baseline_dir": tmp_path / "baselines",
         "eval_results_path": tmp_path / "eval_results.md",
+        "user": "tester",
     }
     paths["model_dir"].mkdir()
     paths["baseline_dir"].mkdir()

@@ -187,6 +187,55 @@ def key_values(pairs: list[tuple[str, str]]) -> str:
     return f'<div class="ct-kv">{cells}</div>'
 
 
+def typing_box(passage: str) -> str:
+    """A self-contained page: the passage, a box to type it in, and live stats.
+
+    Speed and accuracy are worked out in the browser and shown there only.
+    The page has no network code at all, so what is typed never leaves the
+    browser; the runtime records the timing separately, through Raw Input.
+    Pasting is blocked because pasted text produces no keystrokes to learn
+    from.
+    """
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body {{ margin: 0; font-family: {SANS}; color: {TEXT}; background: transparent; }}
+.passage {{ font-family: {SERIF}; font-size: 1.12rem; line-height: 1.7; color: {INK};
+  background: {SURFACE}; border: 1px solid {HAIRLINE}; border-radius: 8px; padding: 18px 20px; }}
+textarea {{ box-sizing: border-box; width: 100%; height: 150px; margin-top: 14px;
+  padding: 14px 16px;
+  font-family: {SANS}; font-size: 1rem; line-height: 1.6; color: {TEXT}; background: {BONE};
+  border: 1px solid {HAIRLINE}; border-radius: 8px; resize: vertical; }}
+textarea:focus {{ outline: none; border-color: {MUTED}; }}
+.stats {{ margin-top: 10px; font-size: 0.85rem; color: {MUTED}; }}
+.stats b {{ color: {INK}; font-weight: 600; }}
+</style></head><body>
+<div class="passage" id="target">{escape(passage)}</div>
+<textarea id="box" spellcheck="false" autocomplete="off"
+  placeholder="Click here and type the paragraph above at your usual pace."></textarea>
+<div class="stats" id="stats">Speed and accuracy appear here as you type.</div>
+<script>
+const target = document.getElementById("target").textContent;
+const box = document.getElementById("box");
+const stats = document.getElementById("stats");
+let started = null;
+box.addEventListener("paste", (event) => event.preventDefault());
+box.addEventListener("input", () => {{
+  if (started === null) started = performance.now();
+  const typed = box.value;
+  let correct = 0;
+  for (let i = 0; i < typed.length && i < target.length; i++) {{
+    if (typed[i] === target[i]) correct++;
+  }}
+  const minutes = (performance.now() - started) / 60000;
+  const wpm = minutes > 0 ? Math.round(typed.length / 5 / minutes) : 0;
+  const accuracy = typed.length ? Math.round(100 * correct / typed.length) : 100;
+  const done = Math.min(100, Math.round(100 * typed.length / target.length));
+  stats.innerHTML = "<b>" + wpm + "</b> words per minute, <b>" + accuracy +
+    "%</b> accurate, <b>" + done + "%</b> of the paragraph";
+}});
+</script></body></html>"""
+
+
 def confidence_meter(confidence: float, threshold: float) -> str:
     confidence = max(0.0, min(1.0, confidence))
     colour = PASTELS["green"][1] if confidence >= threshold else PASTELS["yellow"][1]

@@ -20,6 +20,7 @@ processes never need elevation.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import getpass
 import json
 import os
@@ -64,6 +65,12 @@ from continuum.detection.features import (
 )
 from continuum.detection.model import CadenceModel, model_path
 from continuum.detection.scorer import Scorer, threshold_offset_for_sensitivity
+from continuum.recording import (
+    BaselineRecorder,
+    fail_abandoned_sessions,
+    poll_baseline_commands,
+    save_active_recording,
+)
 from continuum.response.alerts import notify
 from continuum.response.blocker_windows import (
     DEFAULT_DISABLED_DEVICES_PATH,
@@ -83,6 +90,10 @@ STOP_REQUEST_PATH = _REPO_ROOT / "data" / "run" / "runtime.stop"
 MAX_BUFFER_EVENTS = 2000
 TRIM_TO_EVENTS = 500
 MAINTENANCE_INTERVAL_SECONDS = 5.0
+# Training commands from the dashboard are polled faster than maintenance,
+# so Start and Stop on the Train page take effect within about a second.
+COMMAND_POLL_INTERVAL_SECONDS = 1.0
+NO_MODEL_VERSION = "none"
 CAPTURE_POLL_TIMEOUT_SECONDS = 0.5
 
 OUTBOX_BASE_BACKOFF_SECONDS = 5.0
@@ -562,6 +573,28 @@ def write_runtime_status(
         conn.close()
 
 
+def reload_model_if_changed(
+    path: Path, loaded_mtime: float | None
+) -> tuple[CadenceModel | None, float | None]:
+    """A freshly trained model, if the file is new or changed since loaded_mtime.
+
+    Returns (model, its mtime), or (None, mtime) when there is nothing new
+    to load. A file that fails to load is logged once and not retried
+    until it changes again.
+    """
+    try:
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        return None, loaded_mtime
+    if mtime == loaded_mtime:
+        return None, loaded_mtime
+    try:
+        return CadenceModel.load(path), mtime
+    except Exception:
+        logger.exception("could not load the model at %s; keeping the current one", path)
+        return None, mtime
+
+
 def consume_stop_request(path: Path | None = None) -> bool:
     """True, and the request file removed, if a clean shutdown was requested."""
     path = STOP_REQUEST_PATH if path is None else path
@@ -604,7 +637,7 @@ def process_event(
     *,
     device_buffers: dict[str, _DeviceBuffer],
     pending_since: dict[str, datetime],
-    scorer: Scorer,
+    scorer: Scorer | None,
     capture: CaptureSource,
     blocker: DeviceBlocker,
     outbox: IncidentOutbox,
@@ -614,7 +647,16 @@ def process_event(
     effective_mode: str,
     allowlist: list[str],
     connector_db_path: Path,
+    recorder: BaselineRecorder | None = None,
 ) -> None:
+    # Recording a training baseline: collect the typing, never score it, so
+    # fast training typing can never trigger a lock or a disable.
+    if recorder is not None and recorder.active:
+        recorder.record(event)
+        return
+    if scorer is None:  # no trained model yet: nothing to detect against
+        return
+
     buffer = device_buffers.setdefault(event.device_id, _DeviceBuffer())
     buffer.events.append(event)
     if event.event_type == "down" and not event.is_repeat:
@@ -782,20 +824,29 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("starting: mode=%s elevated=%s", effective_mode, elevated)
 
     user = args.user or getpass.getuser()
-    model = CadenceModel.load(model_path(user))
-    logger.info("loaded model %s trained on device %s", model.version, model.baseline_device_id)
+    threshold_offset = threshold_offset_for_sensitivity(settings.detection.sensitivity)
+    model_file = model_path(user)
+    model, model_mtime = reload_model_if_changed(model_file, None)
+    scorer = Scorer(model, threshold_offset=threshold_offset) if model else None
+    if model is None:
+        print(
+            "No trained model yet: recording only, no protection. Train one on the "
+            "dashboard's Train page; it is picked up automatically."
+        )
+        logger.info("no model at %s: recording only until one is trained", model_file)
+    else:
+        logger.info(
+            "loaded model %s trained on device %s", model.version, model.baseline_device_id
+        )
+        logger.info(
+            "sensitivity %d: threshold %.4f (calibrated %.4f)",
+            settings.detection.sensitivity,
+            scorer.base_threshold,
+            model.threshold,
+        )
 
     capture = create_capture_source()
-    scorer = Scorer(
-        model,
-        threshold_offset=threshold_offset_for_sensitivity(settings.detection.sensitivity),
-    )
-    logger.info(
-        "sensitivity %d: threshold %.4f (calibrated %.4f)",
-        settings.detection.sensitivity,
-        scorer.base_threshold,
-        model.threshold,
-    )
+    recorder = BaselineRecorder()
     blocker = DeviceBlocker(
         dry_run=settings.response.dry_run,
         allow_non_usb=settings.response.allow_non_usb_disable,
@@ -809,6 +860,7 @@ def main(argv: list[str] | None = None) -> None:
     connector_db_path = resolve_database_path(settings)
 
     consume_stop_request()  # a stale request from an earlier run must not stop this one
+    fail_abandoned_sessions(connector_db_path)
     released_on_start = blocker.release_all()
     if released_on_start:
         logger.info(
@@ -825,21 +877,25 @@ def main(argv: list[str] | None = None) -> None:
         configured_mode=settings.response.mode,
         effective_mode=effective_mode,
         dry_run=settings.response.dry_run,
-        model_version=model.version,
-        calibrated_threshold=model.threshold,
-        base_threshold=scorer.base_threshold,
+        model_version=model.version if model else NO_MODEL_VERSION,
+        calibrated_threshold=model.threshold if model else 0.0,
+        base_threshold=scorer.base_threshold if scorer else 0.0,
         sensitivity=settings.detection.sensitivity,
     )
 
     capture.start()
     logger.info("capture started")
-    print("Capture started. Watching for injection attacks. Press Ctrl+C to stop.")
+    if scorer is not None:
+        print("Capture started. Watching for injection attacks. Press Ctrl+C to stop.")
+    else:
+        print("Capture started. Waiting for a trained model. Press Ctrl+C to stop.")
     write_runtime_status(
         connector_db_path, identity, state="running", devices=describe_devices(capture, blocker)
     )
 
     try:
         last_maintenance = time.monotonic()
+        last_command_poll = 0.0
         while True:
             try:
                 event = capture.events.get(timeout=CAPTURE_POLL_TIMEOUT_SECONDS)
@@ -861,13 +917,34 @@ def main(argv: list[str] | None = None) -> None:
                     effective_mode=effective_mode,
                     allowlist=settings.response.allowlist,
                     connector_db_path=connector_db_path,
+                    recorder=recorder,
                 )
 
             now_monotonic = time.monotonic()
+            if now_monotonic - last_command_poll >= COMMAND_POLL_INTERVAL_SECONDS:
+                was_recording = recorder.active
+                poll_baseline_commands(connector_db_path, recorder, user=user)
+                if recorder.active != was_recording:
+                    print("Training: recording typing." if recorder.active
+                          else "Training: session saved; detection resumed.")
+                last_command_poll = now_monotonic
             if now_monotonic - last_maintenance >= MAINTENANCE_INTERVAL_SECONDS:
                 if consume_stop_request():
                     print("\nStop requested (stop-all). Stopping.")
                     break
+                new_model, model_mtime = reload_model_if_changed(model_file, model_mtime)
+                if new_model is not None:
+                    model = new_model
+                    scorer = Scorer(model, threshold_offset=threshold_offset)
+                    pending_since.clear()
+                    identity = dataclasses.replace(
+                        identity,
+                        model_version=model.version,
+                        calibrated_threshold=model.threshold,
+                        base_threshold=scorer.base_threshold,
+                    )
+                    logger.info("loaded new model %s", model.version)
+                    print(f"Loaded model {model.version}. Watching for injection attacks.")
                 run_maintenance(blocker, outbox, http_client, base_url, token, connector_db_path)
                 write_runtime_status(
                     connector_db_path,
@@ -879,6 +956,7 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         print("\nStopping.")
     finally:
+        save_active_recording(connector_db_path, recorder, user=user)
         logger.info("shutting down, releasing all disabled devices")
         released = blocker.release_all()
         if released:

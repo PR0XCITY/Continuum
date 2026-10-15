@@ -15,7 +15,6 @@
     .\tasks.ps1 run-all           API, dashboard and an elevated runtime, each in its own window
     .\tasks.ps1 stop-all          stop all three cleanly (the runtime releases every device first)
     .\tasks.ps1 status            what is running
-    .\tasks.ps1 seed-demo         load 200 synthetic incidents through the API (API must be running)
     .\tasks.ps1 release-all       re-enable every device Continuum disabled (elevated prompt)
     .\tasks.ps1 evaluate          regenerate docs/EVALUATION.md
 
@@ -28,7 +27,7 @@ param(
     [ValidateSet(
         'setup', 'test', 'lint', 'record-baseline', 'train-model',
         'run-api', 'run-dashboard', 'run-runtime', 'run-all', 'stop-all', 'status',
-        'seed-demo', 'release-all', 'evaluate',
+        'release-all', 'evaluate',
         'window-api', 'window-dashboard', 'window-runtime'
     )]
     [string]$Task,
@@ -240,11 +239,11 @@ function Invoke-RunAll {
     if (Test-Running 'runtime') {
         Write-Host 'runtime is already running.'
     }
-    elseif ($hasModel -ne 'True') {
-        Write-Host ('Runtime not started: no trained model for this Windows user yet. Run ' +
-                    '.\tasks.ps1 record-baseline and .\tasks.ps1 train-model first.') -ForegroundColor Yellow
-    }
     else {
+        if ($hasModel -ne 'True') {
+            Write-Host ('No trained model yet: the runtime starts in recording-only mode. Open the ' +
+                        "dashboard's Train page to record your typing and train one.") -ForegroundColor Yellow
+        }
         Write-Host 'Starting the runtime elevated: approve the Windows prompt (UAC).'
         try {
             Start-ComponentWindow 'runtime' -Elevated | Out-Null
@@ -324,7 +323,6 @@ switch ($Task) {
     'run-all'          { Invoke-RunAll }
     'stop-all'         { Invoke-StopAll }
     'status'           { Invoke-Status }
-    'seed-demo'        { Invoke-Python (@('tools\gen_incidents.py') + $Rest) }
     'release-all'      { Invoke-Python @('-m', 'continuum.runtime', '--release-all') }
     'evaluate'         { Invoke-Python (@('tools\evaluate_all.py') + $Rest) }
     'window-api'       { Invoke-Logged 'api' (Get-ApiArgs) }

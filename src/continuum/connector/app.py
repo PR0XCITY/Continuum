@@ -22,6 +22,7 @@ the real configured settings at import time.
 
 from __future__ import annotations
 
+import getpass
 import json
 import threading
 from collections.abc import AsyncIterator, Generator
@@ -37,7 +38,7 @@ from sqlalchemy.orm import Session
 from continuum.common.config import LOCAL_OVERRIDE_PATH, REPO_ROOT, Settings, get_settings
 from continuum.common.logging import get_logger
 from continuum.common.schemas import AttackPattern, IncidentRecord, Verdict
-from continuum.connector import calibration, db, settings_store
+from continuum.connector import calibration, db, settings_store, training
 from continuum.connector.auth import make_bearer_token_dependency
 from continuum.connector.document import (
     detect_suspicious_notes,
@@ -195,7 +196,63 @@ class SettingsResponse(BaseModel):
     applies_on: Literal["runtime_restart"] = "runtime_restart"
 
 
+class TrainingStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    paragraph_index: int = Field(default=0, ge=0, le=1000)
+
+
+class BaselineSessionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    state: str
+    paragraph_index: int
+    device_id: str | None
+    presses: int
+    windows_saved: int
+    message: str
+    created_at: str
+    updated_at: str
+
+
+class TrainingStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    runtime_running: bool
+    session: BaselineSessionResponse | None
+    saved_sessions: int
+    baseline: dict[str, object]
+    model: dict[str, object]
+    minimum_windows: int
+    recommended_windows: int
+
+
 # --- app factory ---------------------------------------------------------
+
+
+def _runtime_running(row: db.RuntimeStatusRow | None) -> bool:
+    """Running, and heard from recently enough to trust it."""
+    if row is None or row.state != "running":
+        return False
+    age_seconds = (datetime.now(UTC) - datetime.fromisoformat(row.heartbeat_at)).total_seconds()
+    return age_seconds <= RUNTIME_STALE_AFTER_SECONDS
+
+
+def _session_response(row: db.BaselineSessionRow | None) -> BaselineSessionResponse | None:
+    if row is None:
+        return None
+    return BaselineSessionResponse(
+        id=row.id,
+        state=row.state,
+        paragraph_index=row.paragraph_index,
+        device_id=row.device_id,
+        presses=row.presses,
+        windows_saved=row.windows_saved,
+        message=row.message,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
 
 
 def create_app(
@@ -205,8 +262,12 @@ def create_app(
     model_dir: Path = DEFAULT_MODEL_DIR,
     baseline_dir: Path = DEFAULT_BASELINE_DIR,
     eval_results_path: Path = DEFAULT_EVAL_RESULTS_PATH,
+    user: str | None = None,
 ) -> FastAPI:
     resolved_settings = settings if settings is not None else get_settings()
+    # Whose baseline and model the Train page manages: the Windows user, the
+    # same name the runtime uses to find its model.
+    training_user = user or getpass.getuser()
     database_path = db.resolve_database_path(resolved_settings)
     engine = db.create_db_engine(database_path)
     session_factory = db.make_session_factory(engine)
@@ -405,7 +466,7 @@ def create_app(
 
         heartbeat = datetime.fromisoformat(row.heartbeat_at)
         age_seconds = (datetime.now(UTC) - heartbeat).total_seconds()
-        running = row.state == "running" and age_seconds <= RUNTIME_STALE_AFTER_SECONDS
+        running = _runtime_running(row)
         return RuntimeStatusResponse(
             running=running,
             state="running" if running else "stopped",
@@ -459,6 +520,84 @@ def create_app(
         return SettingsResponse(
             settings=saved, env_overridden_fields=settings_store.env_overridden_fields()
         )
+
+    # --- Train page: record a baseline through the runtime, then train ---------
+
+    def training_status(session: Session) -> TrainingStatusResponse:
+        return TrainingStatusResponse(
+            runtime_running=_runtime_running(db.get_runtime_status(session)),
+            session=_session_response(db.latest_baseline_session(session)),
+            saved_sessions=db.count_saved_baseline_sessions(session),
+            baseline=training.baseline_summary(baseline_dir, training_user),
+            model=training.model_summary(model_dir, training_user),
+            minimum_windows=training.MIN_TRAIN_WINDOWS,
+            recommended_windows=training.RECOMMENDED_WINDOWS,
+        )
+
+    def active_session(session: Session) -> db.BaselineSessionRow | None:
+        latest = db.latest_baseline_session(session)
+        return latest if latest and latest.state in db.ACTIVE_SESSION_STATES else None
+
+    @app.get("/training", response_model=TrainingStatusResponse, dependencies=[auth])
+    def get_training(session: Session = Depends(get_db)) -> TrainingStatusResponse:
+        return training_status(session)
+
+    @app.post("/training/start", response_model=TrainingStatusResponse, dependencies=[auth])
+    def start_training(
+        request: TrainingStartRequest, session: Session = Depends(get_db)
+    ) -> TrainingStatusResponse:
+        if active_session(session) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A recording session is already in progress. Stop it first.",
+            )
+        row = db.create_baseline_session(session, paragraph_index=request.paragraph_index)
+        logger.info("baseline session %d requested", row.id)
+        return training_status(session)
+
+    @app.post("/training/stop", response_model=TrainingStatusResponse, dependencies=[auth])
+    def stop_training(session: Session = Depends(get_db)) -> TrainingStatusResponse:
+        row = active_session(session)
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="No recording session is in progress."
+            )
+        if row.state == db.SESSION_REQUESTED:
+            # The runtime never picked it up; it ignores the start command now.
+            row.state = db.SESSION_CANCELLED
+            row.message = "Cancelled before recording started."
+            row.updated_at = datetime.now(UTC).isoformat()
+        else:
+            db.insert_command(
+                session, command_type=db.COMMAND_BASELINE_STOP, device_id=str(row.id)
+            )
+        session.flush()
+        return training_status(session)
+
+    @app.post("/training/train", response_model=TrainingStatusResponse, dependencies=[auth])
+    def train(session: Session = Depends(get_db)) -> TrainingStatusResponse:
+        if active_session(session) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Stop the recording session before training.",
+            )
+        try:
+            summary = training.train_model(baseline_dir, model_dir, training_user)
+        except training.TrainingError as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        logger.info("trained model %s for %s", summary["version"], training_user)
+        return training_status(session)
+
+    @app.delete("/training/baseline", response_model=TrainingStatusResponse, dependencies=[auth])
+    def reset_training(session: Session = Depends(get_db)) -> TrainingStatusResponse:
+        if active_session(session) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Stop the recording session before starting over.",
+            )
+        training.reset_baseline(baseline_dir, training_user)
+        logger.info("baseline reset for %s", training_user)
+        return training_status(session)
 
     return app
 

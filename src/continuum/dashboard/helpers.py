@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, date, datetime, time, timedelta
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -320,6 +321,52 @@ def llm_disclosure(provider: str, rag_settings: Any) -> str:
         f"Answers are written by {rag_settings.ollama_model}, running locally in Ollama; "
         "nothing leaves this machine."
     )
+
+
+_SECTION_HEADING = re.compile(r"^##\s+(.+?)\s*$")
+_MARKDOWN_INLINE = re.compile(r"[*_`]")
+
+
+def typing_passages(corpus_dir: Path) -> list[str]:
+    """Paragraphs for the Train page: each playbook's "When to use" section.
+
+    Ordinary prose already in the corpus, flattened to one line with the
+    markdown markup removed, so it is comfortable to type.
+    """
+    passages: list[str] = []
+    for path in sorted(corpus_dir.rglob("*.md")):
+        lines: list[str] = []
+        inside = False
+        for line in path.read_text(encoding="utf-8").splitlines():
+            heading = _SECTION_HEADING.match(line)
+            if heading:
+                inside = heading.group(1).strip().lower() == "when to use"
+                continue
+            if inside:
+                lines.append(line.strip())
+        text = re.sub(r"\s+", " ", _MARKDOWN_INLINE.sub("", " ".join(lines))).strip()
+        if text:
+            passages.append(text)
+    return passages
+
+
+def passage_for_session(passages: list[str], saved_sessions: int) -> tuple[int, str]:
+    """The next passage to type: a different one for each saved session, cycling."""
+    if not passages:
+        return 0, ""
+    index = saved_sessions % len(passages)
+    return index, passages[index]
+
+
+def baseline_progress(n_windows: int, minimum: int, recommended: int) -> str:
+    if n_windows >= recommended:
+        return "Enough typing recorded. Train the model, or record more for a stronger baseline."
+    if n_windows >= minimum:
+        return (
+            f"Enough to train. {recommended - n_windows} more windows reach the recommended "
+            f"{recommended}."
+        )
+    return f"{minimum - n_windows} more windows needed before training is possible."
 
 
 def confidence_band(confidence: float, threshold: float) -> str:

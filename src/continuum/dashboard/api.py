@@ -117,3 +117,23 @@ class ConnectorClient:
 
     def put_settings(self, settings: dict[str, Any]) -> dict:
         return self._request("PUT", "/settings", json=settings)
+
+    # --- Train page ---------------------------------------------------------------
+
+    def training(self) -> dict:
+        return self._request("GET", "/training")
+
+    def training_start(self, paragraph_index: int) -> dict:
+        return self._request(
+            "POST", "/training/start", json={"paragraph_index": paragraph_index}
+        )
+
+    def training_stop(self) -> dict:
+        return self._request("POST", "/training/stop")
+
+    def training_train(self) -> dict:
+        # Fitting and calibrating takes a few seconds on a large baseline.
+        return self._request("POST", "/training/train", timeout=120.0)
+
+    def training_reset(self) -> dict:
+        return self._request("DELETE", "/training/baseline")
