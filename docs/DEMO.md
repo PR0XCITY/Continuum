@@ -60,18 +60,23 @@ Expected:
    about half a second **the screen locks**. Roughly 40 characters land
    in Notepad first. That is expected; see part f and the README's known
    limitations.
-3. The runtime window logs the block, the disable and
-   `posted incident ...`.
-4. Unlock with your own keyboard. A Windows notification,
-   **Continuum: device blocked**, says the device was blocked
-   (`locked_and_disabled`).
-5. The Digispark is disabled. In Device Manager (`devmgmt.msc`, Keyboards)
-   it has a down-arrow icon, and on the Live status page it has a red
-   `BLOCKED` badge marked "disabled by Continuum".
+3. The runtime window logs the block, then
+   `disable did not take effect ... Cannot disable critical system device`,
+   then `posted incident ...`. Windows refuses to switch off any keyboard
+   while it is in use, so the device is **not** disabled; the lock is what
+   contains the attack.
+4. The rest of the payload types into the lock screen's password box. It
+   never presses Enter, so no sign-in is attempted. **Unplug the
+   Digispark**, clear the password box and sign in with your own keyboard.
+5. A Windows notification, **Continuum: device blocked**, says the device
+   was blocked (`workstation_locked`). On the Live status page the
+   Digispark has a red `BLOCKED` badge.
 
-Say: lock happens first because anything typed after the lock goes into
-the password box, not into a terminal. The device is disabled with
-`pnputil`, and the result is checked rather than assumed.
+Say: the moment the cadence stops looking human, the session locks, so
+anything typed after that goes into the password box, not into a
+terminal. Windows does not allow a keyboard to be disabled while it is
+in use (it reports it as a critical system device), so physically
+removing the device is what makes containment permanent.
 
 ## c) The incident in the dashboard (1:40 to 2:30)
 
@@ -160,15 +165,15 @@ run:
 ```
 
 Expected:
-- The command prints `Released 1 device(s).`
-- In Device Manager the Digispark's down arrow disappears.
-- Within about 5 seconds the running runtime notices, and the Live status
-  page drops "disabled by Continuum" for that device.
+- The command prints `Released 0 device(s).` Nothing was left disabled:
+  Windows refused to disable the keyboard in part b, and you unplugged
+  it.
 
 Say: this one command re-enables everything Continuum has disabled,
 whatever each device's timer says. Even without it, every device is
-released automatically after 10 minutes. The runtime also releases
-everything when it starts and when it stops.
+released automatically after 10 minutes, and the runtime releases
+everything when it starts and when it stops. These rails exist so that a
+false alarm can never leave someone without a working keyboard.
 
 ## After the demo
 

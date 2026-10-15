@@ -117,9 +117,15 @@ On a `blocked` verdict, in this order:
    - never the last enabled keyboard.
 
    The result is verified with CfgMgr32 instead of trusting the exit
-   code, and the parent USB node is disabled if the HID child stays
+   code, and the parent USB node is tried if the HID child stays
    active. Every disabled device is written to
    `data/disabled_devices.json` straight away.
+
+   In practice Windows refuses to disable any keyboard while it is in use
+   ("Cannot disable critical system device"), so against a keyboard
+   injector this step fails, its pnputil output is logged, and the lock
+   from step 1 is what contains the attack. In `disable_only` mode, step 1
+   is skipped and the lock happens here, as the fallback.
 3. **Alert** with a Windows toast (winotify), a console line and an
    events log entry.
 4. **Record** an `IncidentRecord` and POST it to the connector. If the
@@ -253,8 +259,9 @@ anything. Streamlit's usage statistics are turned off.
 3. Ten presses later the second window is flagged as well, so it is
    `blocked`. In the evaluation this happened about 270 ms after the
    first keystroke.
-4. The handler locks the session, disables the device, raises a toast and
-   posts the incident. It is readable through the API within
+4. The handler locks the session and tries to disable the device. Windows
+   refuses to disable a keyboard in use, so the lock is what contains a
+   keyboard injector. It then raises a toast and posts the incident. It is readable through the API within
    milliseconds.
 5. Within about 3 seconds the connector's watcher has embedded the
    incident, and IncidentRAG can answer questions about it.

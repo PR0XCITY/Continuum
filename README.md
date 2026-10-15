@@ -48,9 +48,11 @@ flowchart LR
   layer.
 - **Cadence Analysis Engine:** 17 timing features over sliding 30-keystroke windows,
   scored by an Isolation Forest trained on your own typing, with a two-window debounce.
-- **Block and Alert Handler:** lock first, then disable the device with `pnputil`, verify
-  it worked, show a notification, and send the incident. Safety rails apply throughout (see
-  [Security design](#security-design)).
+- **Block and Alert Handler:** lock the workstation, try to disable the device with
+  `pnputil` and verify the result, show a notification, and send the incident. Windows
+  refuses to disable a keyboard while it is in use, so for keyboard injectors the lock is
+  what contains the attack (see [Known limitations](#known-limitations)). Safety rails apply
+  throughout (see [Security design](#security-design)).
 - **Connector API:** a local FastAPI service, with bearer-token authentication even on
   localhost, that validates and stores every incident.
 - **Retrieval Engine and Confidence Scorer:** hybrid retrieval over incidents and playbooks,
@@ -307,6 +309,12 @@ Measured in [docs/EVALUATION.md](docs/EVALUATION.md):
   reach the focused window. A payload shorter than 40 keystrokes is never detected.
 - **A small baseline means false positives.** Typing much faster than anything in your
   baseline can be blocked. Include a fast session when recording.
+- **Windows will not disable a keyboard in use.** `pnputil` refuses with "Cannot disable
+  critical system device", and forcing it only takes effect after a reboot. So against a
+  keyboard injector Continuum contains the attack by locking the workstation, and the rest
+  of the payload types into the lock screen's password box (harmlessly, unless the payload
+  presses Enter). Unplugging the device is what makes containment permanent. In
+  `disable_only` mode the lock is the fallback for exactly this case.
 - **The Digispark's bootloader delay is excluded.** It waits about 5 seconds after plug-in
   before typing, so plug-in to lock takes longer than the measured first-keystroke-to-lock
   time.
