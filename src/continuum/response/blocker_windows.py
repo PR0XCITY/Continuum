@@ -412,18 +412,23 @@ class DeviceBlocker:
 
     def _try_disable(self, instance_id: str) -> bool:
         result = _pnputil_disable(instance_id)
+        returncode = getattr(result, "returncode", None)
         # The exit code is not trusted; re-query the real device status,
         # briefly, in case Windows completes the disable a moment later.
+        # Only a reported success is worth waiting on: when pnputil refused
+        # (for a keyboard, "Cannot disable critical system device") or
+        # deferred it to a reboot (3010), nothing will change, and every
+        # extra moment here is more keystrokes before the fallback.
+        attempts = DISABLE_VERIFY_ATTEMPTS if returncode in (0, None) else 1
         status = None
-        for attempt in range(DISABLE_VERIFY_ATTEMPTS):
+        for attempt in range(attempts):
             status = is_devnode_started(instance_id)
             if status is False:
                 return True
-            if attempt < DISABLE_VERIFY_ATTEMPTS - 1:
+            if attempt < attempts - 1:
                 time.sleep(DISABLE_VERIFY_INTERVAL_SECONDS)
 
         state = {None: "not found in the device tree", True: "still started"}[status]
-        returncode = getattr(result, "returncode", None)
         output = " ".join(
             (getattr(result, "stdout", "") or "").split()
             + (getattr(result, "stderr", "") or "").split()

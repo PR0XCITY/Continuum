@@ -387,3 +387,25 @@ def test_disable_succeeds_when_the_status_changes_a_moment_later(blocker, monkey
 
     assert result.success
     assert result.disabled_instance_id == CHILD_ID
+
+
+def test_a_refused_disable_is_checked_once_not_polled(blocker, monkeypatch):
+    # pnputil refused (keyboards are "critical system devices"): waiting cannot
+    # help, and every moment spent waiting is more keystrokes before the fallback.
+    class _Refused:
+        returncode = 3758096945
+        stdout = "Failed to disable device: Cannot disable critical system device."
+        stderr = ""
+
+    checks = []
+    sleeps = []
+    monkeypatch.setattr(blocker_module, "_pnputil_disable", lambda i: _Refused())
+    monkeypatch.setattr(blocker_module, "is_devnode_started", lambda i: checks.append(i) or True)
+    monkeypatch.setattr(blocker_module, "get_parent_instance_id", lambda i: PARENT_ID)
+    monkeypatch.setattr(blocker_module.time, "sleep", sleeps.append)
+
+    result = blocker.disable(CHILD_ID, is_usb=True, allowlist=[], other_enabled_keyboard_count=1)
+
+    assert not result.success
+    assert checks == [CHILD_ID, PARENT_ID]
+    assert sleeps == []
