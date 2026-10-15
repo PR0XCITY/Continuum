@@ -169,17 +169,77 @@ def test_disable_falls_back_to_the_parent_when_the_child_is_still_started(blocke
     assert attempted == [CHILD_ID, PARENT_ID]
 
 
-def test_disable_fails_when_the_parent_fallback_also_fails(blocker, monkeypatch):
+def _refuse_every_disable(monkeypatch):
     monkeypatch.setattr(blocker_module, "DISABLE_VERIFY_INTERVAL_SECONDS", 0.0)
     monkeypatch.setattr(blocker_module, "_pnputil_disable", lambda instance_id: None)
     monkeypatch.setattr(blocker_module, "is_devnode_started", lambda instance_id: True)
     monkeypatch.setattr(blocker_module, "get_parent_instance_id", lambda instance_id: PARENT_ID)
 
+
+def test_a_device_windows_will_not_disable_is_quarantined(blocker, monkeypatch, tmp_path):
+    _refuse_every_disable(monkeypatch)
+
     result = blocker.disable(CHILD_ID, is_usb=True, allowlist=[], other_enabled_keyboard_count=1)
 
-    assert result.success is False
-    assert result.disabled_instance_id is None
+    assert result.success is True
+    assert result.quarantined is True
+    assert result.disabled_instance_id == CHILD_ID
+    assert blocker.is_disabled(CHILD_ID) is True
+    assert blocker.is_quarantined(CHILD_ID) is True
+    assert blocker.blocked_instance_ids == [CHILD_ID]
+    # Persisted, so release-all from another process can see and clear it.
+    [record] = load_disabled_devices(tmp_path / "disabled_devices.json")
+    assert record.quarantined is True
+
+
+def test_unblocking_a_quarantined_device_never_calls_pnputil(blocker, monkeypatch):
+    _refuse_every_disable(monkeypatch)
+    blocker.disable(CHILD_ID, is_usb=True, allowlist=[], other_enabled_keyboard_count=1)
+    monkeypatch.setattr(blocker_module, "_pnputil_enable", _fail_if_called)
+
+    assert blocker.enable(CHILD_ID) is True
     assert blocker.is_disabled(CHILD_ID) is False
+    assert blocker.is_quarantined(CHILD_ID) is False
+
+
+def test_a_quarantine_still_respects_the_safety_rails(blocker, monkeypatch):
+    _refuse_every_disable(monkeypatch)
+
+    last_keyboard = blocker.disable(
+        CHILD_ID, is_usb=True, allowlist=[], other_enabled_keyboard_count=0
+    )
+    allowlisted = blocker.disable(
+        CHILD_ID, is_usb=True, allowlist=[CHILD_ID], other_enabled_keyboard_count=1
+    )
+
+    assert not last_keyboard.success
+    assert not allowlisted.success
+    assert blocker.is_disabled(CHILD_ID) is False
+
+
+def test_quarantines_are_released_by_release_all_and_auto_release(blocker, monkeypatch):
+    _refuse_every_disable(monkeypatch)
+    monkeypatch.setattr(blocker_module, "_pnputil_enable", _fail_if_called)
+    blocker.disable(CHILD_ID, is_usb=True, allowlist=[], other_enabled_keyboard_count=1)
+    assert blocker.release_all() == [CHILD_ID]
+
+    blocker.disable(CHILD_ID, is_usb=True, allowlist=[], other_enabled_keyboard_count=1)
+    later = datetime.now(UTC) + timedelta(days=1)
+    assert blocker.check_auto_release(now=later) == [CHILD_ID]
+    assert blocker.blocked_instance_ids == []
+
+
+def test_a_record_without_the_quarantined_field_loads_as_disabled():
+    record = DisabledDeviceRecord.from_json(
+        {
+            "requested_instance_id": CHILD_ID,
+            "disabled_instance_id": PARENT_ID,
+            "reason": "test",
+            "disabled_at": "2026-01-01T00:00:00+00:00",
+            "auto_release_at": "2026-01-01T00:10:00+00:00",
+        }
+    )
+    assert record.quarantined is False
 
 
 def test_disable_dry_run_never_calls_pnputil_and_persists_nothing(tmp_path, monkeypatch):
@@ -208,7 +268,7 @@ def test_disable_is_idempotent_for_an_already_disabled_device(blocker, monkeypat
 
     assert first.success is True
     assert second.success is True
-    assert second.reason == "already disabled"
+    assert second.reason == "already blocked"
     assert calls == [CHILD_ID]  # pnputil was only invoked once
 
 
@@ -406,6 +466,6 @@ def test_a_refused_disable_is_checked_once_not_polled(blocker, monkeypatch):
 
     result = blocker.disable(CHILD_ID, is_usb=True, allowlist=[], other_enabled_keyboard_count=1)
 
-    assert not result.success
+    assert result.quarantined
     assert checks == [CHILD_ID, PARENT_ID]
     assert sleeps == []

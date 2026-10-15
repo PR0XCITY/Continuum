@@ -92,6 +92,9 @@ class ActionTaken(str, Enum):
     DEVICE_DISABLED = "device_disabled"
     WORKSTATION_LOCKED = "workstation_locked"
     LOCKED_AND_DISABLED = "locked_and_disabled"
+    # Windows refused to disable the keyboard, so Continuum locked the
+    # workstation and blocked the device itself (see DeviceBlocker).
+    LOCKED_AND_QUARANTINED = "locked_and_quarantined"
     ALERT_ONLY = "alert_only"
     NONE = "none"
 

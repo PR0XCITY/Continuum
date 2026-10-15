@@ -176,9 +176,13 @@ def test_describe_devices_reports_identity_and_disabled_state():
         def is_disabled(self, instance_id):
             return instance_id == "inst-b"
 
+        def is_quarantined(self, instance_id):
+            return instance_id == "inst-b"
+
     devices = describe_devices(_Capture(), _Blocker())
 
     assert [d["disabled"] for d in devices] == [False, True]
+    assert [d["quarantined"] for d in devices] == [False, True]
     assert set(devices[0]) == {
         "device_id",
         "name",
@@ -187,6 +191,7 @@ def test_describe_devices_reports_identity_and_disabled_state():
         "bus_type",
         "is_usb",
         "disabled",
+        "quarantined",
     }
 
 

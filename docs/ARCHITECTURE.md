@@ -123,9 +123,16 @@ On a `blocked` verdict, in this order:
 
    In practice Windows refuses to disable any keyboard while it is in use
    ("Cannot disable critical system device"), so against a keyboard
-   injector this step fails, its pnputil output is logged, and the lock
-   from step 1 is what contains the attack. In `disable_only` mode, step 1
-   is skipped and the lock happens here, as the fallback.
+   injector this step fails and its pnputil output is logged. The device
+   is then **quarantined** instead: it gets the same record in
+   `data/disabled_devices.json`, marked `quarantined`, and from then on
+   the runtime locks the workstation whenever that device presses a key
+   (at most once every 2 seconds) and never scores it. A quarantine is
+   lifted by the same paths as a disable: the dashboard's Unblock device
+   button, the auto-release timeout, `--release-all`, or the runtime
+   stopping. The allowlist and last-keyboard rails are checked before
+   either. In `disable_only` mode, step 1 is skipped and a quarantine
+   always comes with a lock, since the device can still type.
 3. **Alert** with a Windows toast (winotify), a console line and an
    events log entry.
 4. **Record** an `IncidentRecord` and POST it to the connector. If the
@@ -287,12 +294,14 @@ anything. Streamlit's usage statistics are turned off.
    `blocked`. In the evaluation this happened about 270 ms after the
    first keystroke.
 4. The handler locks the session and tries to disable the device. Windows
-   refuses to disable a keyboard in use, so the lock is what contains a
-   keyboard injector. It then raises a toast and posts the incident. It is readable through the API within
+   refuses to disable a keyboard in use, so the device is quarantined:
+   every later key press from it locks the session again. It then raises
+   a toast and posts the incident, readable through the API within
    milliseconds.
 5. Within about 3 seconds the connector's watcher has embedded the
    incident, and IncidentRAG can answer questions about it.
-6. The device is re-enabled after the timeout, through the dashboard's
-   unblock button, or with `--release-all`.
+6. The device is released after the timeout, through the dashboard's
+   Unblock device button (Live status or Incidents), or with
+   `--release-all`. The runtime polls for unblock commands every second.
 
 Measured results and known limits are in [EVALUATION.md](EVALUATION.md).

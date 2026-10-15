@@ -24,6 +24,7 @@ from continuum.common.schemas import (
     DetectionResult,
     DeviceInfo,
     FeatureWindow,
+    KeyEvent,
 )
 from continuum.connector import db as connector_db
 from continuum.detection.scorer import Scorer
@@ -263,7 +264,7 @@ def test_disable_only_mode_disables_without_locking(tmp_path, monkeypatch):
     assert disabled == [device.instance_id]
 
 
-def test_disable_only_mode_locks_when_the_disable_fails(tmp_path, monkeypatch):
+def test_disable_only_mode_locks_and_quarantines_when_windows_refuses(tmp_path, monkeypatch):
     locks = []
     monkeypatch.setattr(runtime, "lock_workstation", lambda: locks.append(1) or True)
     monkeypatch.setattr(blocker_module, "is_elevated", lambda: True)
@@ -284,9 +285,10 @@ def test_disable_only_mode_locks_when_the_disable_fails(tmp_path, monkeypatch):
         timings=timings,
     )
 
-    assert action == ActionTaken.WORKSTATION_LOCKED
+    assert action == ActionTaken.LOCKED_AND_QUARANTINED
     assert locks == [1]
     assert "lock_done_ms" in timings
+    assert blocker.is_quarantined(_device().instance_id)
 
 
 def test_disable_only_mode_locks_when_a_safety_rail_refuses(tmp_path, monkeypatch):
@@ -856,3 +858,111 @@ def test_an_unreadable_model_is_reported_once_not_retried(tmp_path):
     model, mtime = runtime.reload_model_if_changed(path, None)
     assert model is None and mtime is not None
     assert runtime.reload_model_if_changed(path, mtime) == (None, mtime)
+
+
+# --- quarantine: a device Windows will not disable stays blocked in Continuum --
+
+
+def _key(event_type="down", *, is_repeat=False, press_id=1, device_id=DEVICE_ID):
+    return KeyEvent(
+        device_id=device_id,
+        timestamp_ns=press_id * 1_000_000,
+        event_type=event_type,
+        press_id=press_id,
+        is_repeat=is_repeat,
+    )
+
+
+def test_a_quarantined_device_locks_on_a_key_press_at_most_every_two_seconds(monkeypatch):
+    locks = []
+    monkeypatch.setattr(runtime, "lock_workstation", lambda: locks.append(1) or True)
+    locked_at: dict[str, float] = {}
+
+    assert runtime.enforce_quarantine(_key(), locked_at, now=100.0)
+    assert not runtime.enforce_quarantine(_key(press_id=2), locked_at, now=101.0)
+    assert not runtime.enforce_quarantine(_key("up"), locked_at, now=103.0)
+    assert not runtime.enforce_quarantine(_key(is_repeat=True), locked_at, now=103.0)
+    assert runtime.enforce_quarantine(_key(press_id=3), locked_at, now=103.0)
+    assert locks == [1, 1]
+
+
+def test_process_event_locks_for_a_quarantined_device_and_never_scores_it(
+    tmp_path, monkeypatch
+):
+    locks = []
+    monkeypatch.setattr(runtime, "lock_workstation", lambda: locks.append(1) or True)
+
+    class _Quarantined(DeviceBlocker):
+        def is_quarantined(self, requested_instance_id):
+            return requested_instance_id == DEVICE_ID
+
+    blocker = _Quarantined(dry_run=True, disabled_devices_path=tmp_path / "disabled.json")
+    outbox = runtime.IncidentOutbox(tmp_path / "outbox.sqlite3")
+    client = httpx.Client()
+    buffers: dict = {}
+    try:
+        runtime.process_event(
+            _key(),
+            device_buffers=buffers,
+            pending_since={},
+            scorer=Scorer(_AlwaysFlag()),
+            capture=_FakeCapture([_device()]),
+            blocker=blocker,
+            outbox=outbox,
+            http_client=client,
+            base_url="http://127.0.0.1:1",
+            token="t",
+            effective_mode="disable_only",
+            allowlist=[],
+            connector_db_path=tmp_path / "connector.sqlite3",
+            quarantine_locked_at={},
+        )
+        assert len(outbox) == 0
+    finally:
+        client.close()
+        outbox.close()
+
+    assert locks == [1]
+    assert buffers == {}
+
+
+def test_a_quarantine_incident_asks_to_notify_the_security_team():
+    incident = runtime.build_incident(
+        _detection_result(),
+        _device(),
+        action_taken=ActionTaken.LOCKED_AND_QUARANTINED,
+        time_to_detect_ms=10,
+    )
+
+    assert incident.action_taken == ActionTaken.LOCKED_AND_QUARANTINED
+    assert "notify_security_team" in [f.value for f in incident.recommended_followups]
+
+
+def test_an_unblock_command_lifts_a_quarantine(tmp_path, monkeypatch):
+    monkeypatch.setattr(blocker_module, "is_elevated", lambda: True)
+    monkeypatch.setattr(blocker_module, "DISABLE_VERIFY_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(blocker_module, "_pnputil_disable", lambda i: None)
+    monkeypatch.setattr(blocker_module, "is_devnode_started", lambda i: True)
+    monkeypatch.setattr(blocker_module, "get_parent_instance_id", lambda i: None)
+    blocker = DeviceBlocker(disabled_devices_path=tmp_path / "disabled.json")
+    blocker.disable(DEVICE_ID, is_usb=True, allowlist=[], other_enabled_keyboard_count=1)
+    assert blocker.is_quarantined(DEVICE_ID)
+
+    db_path = tmp_path / "connector.sqlite3"
+    engine = connector_db.create_db_engine(db_path)
+    session = connector_db.make_session_factory(engine)()
+    session.add(
+        connector_db.CommandRow(
+            command_type=connector_db.COMMAND_UNBLOCK,
+            device_id=DEVICE_ID,
+            status="pending",
+            created_at=datetime.now(UTC).isoformat(),
+        )
+    )
+    session.commit()
+    session.close()
+    engine.dispose()
+
+    runtime.poll_unblock_commands(db_path, blocker)
+
+    assert not blocker.is_disabled(DEVICE_ID)

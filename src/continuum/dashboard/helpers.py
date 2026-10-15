@@ -81,6 +81,15 @@ def device_verdict(verdict: str | None, *, disabled: bool) -> str:
     return "idle"
 
 
+def blocked_note(device: dict[str, Any]) -> str:
+    """How a blocked device is blocked, for its card; empty if it is not."""
+    if not device.get("disabled"):
+        return ""
+    if device.get("quarantined"):
+        return "blocked by Continuum, any key press locks the screen"
+    return "disabled in Windows"
+
+
 def merge_devices(
     runtime_devices: list[dict[str, Any]], snapshots: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -99,6 +108,7 @@ def merge_devices(
             "vendor_product": f"{vendor_id}:{product_id}",
             "bus_type": device.get("bus_type", ""),
             "disabled": bool(device.get("disabled")),
+            "quarantined": bool(device.get("quarantined")),
             "attached": True,
             "verdict": None,
             "anomaly_score": None,
@@ -114,6 +124,7 @@ def merge_devices(
                 "vendor_product": "",
                 "bus_type": "",
                 "disabled": False,
+                "quarantined": False,
                 "attached": False,
             },
         )

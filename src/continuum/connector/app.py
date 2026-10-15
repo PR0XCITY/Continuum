@@ -157,6 +157,8 @@ class RuntimeDevice(BaseModel):
     bus_type: str
     is_usb: bool
     disabled: bool
+    # Blocked by Continuum because Windows refused to disable it.
+    quarantined: bool = False
 
 
 class RuntimeStatusResponse(BaseModel):

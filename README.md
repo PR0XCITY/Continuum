@@ -50,9 +50,10 @@ flowchart LR
   scored by an Isolation Forest trained on your own typing, with a two-window debounce.
 - **Block and Alert Handler:** lock the workstation, try to disable the device with
   `pnputil` and verify the result, show a notification, and send the incident. Windows
-  refuses to disable a keyboard while it is in use, so for keyboard injectors the lock is
-  what contains the attack (see [Known limitations](#known-limitations)). Safety rails apply
-  throughout (see [Security design](#security-design)).
+  refuses to disable a keyboard while it is in use, so Continuum blocks it itself instead:
+  any further key press from that device locks the screen again, until you click
+  **Unblock device** on the dashboard (see [Known limitations](#known-limitations)). Safety
+  rails apply throughout (see [Security design](#security-design)).
 - **Connector API:** a local FastAPI service, with bearer-token authentication even on
   localhost, that validates and stores every incident.
 - **Retrieval Engine and Confidence Scorer:** hybrid retrieval over incidents and playbooks,
@@ -317,11 +318,14 @@ Measured in [docs/EVALUATION.md](docs/EVALUATION.md):
 - **A small baseline means false positives.** Typing much faster than anything in your
   baseline can be blocked. Include a fast session when recording.
 - **Windows will not disable a keyboard in use.** `pnputil` refuses with "Cannot disable
-  critical system device", and forcing it only takes effect after a reboot. So against a
-  keyboard injector Continuum contains the attack by locking the workstation, and the rest
-  of the payload types into the lock screen's password box (harmlessly, unless the payload
-  presses Enter). Unplugging the device is what makes containment permanent. In
-  `disable_only` mode the lock is the fallback for exactly this case.
+  critical system device", and forcing it only takes effect after a reboot. So Continuum
+  blocks the device itself: it locks the workstation, marks the device as blocked, and from
+  then on every key press from it locks the screen again (at most once every 2 seconds).
+  The device still reaches Windows, so anything it types lands in the lock screen's
+  password box (harmlessly, unless the payload presses Enter). The block lasts until you
+  click **Unblock device** on the dashboard's Live status or Incidents page, the
+  auto-release timeout passes, or you run `release-all`. Unplugging the device is still the
+  only way to stop it typing at all.
 - **The Digispark's bootloader delay is excluded.** It waits about 5 seconds after plug-in
   before typing, so plug-in to lock takes longer than the measured first-keystroke-to-lock
   time.

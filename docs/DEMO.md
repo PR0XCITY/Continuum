@@ -59,22 +59,27 @@ Expected:
    in Notepad first. That is expected; see part f and the README's known
    limitations.
 3. The runtime window logs the block, then
-   `disable did not take effect ... Cannot disable critical system device`,
-   then `posted incident ...`. Windows refuses to switch off any keyboard
-   while it is in use, so the device is **not** disabled; the lock is what
-   contains the attack.
+   `Cannot disable critical system device`, then
+   `Blocked HID\VID_16C0&PID_27DB\... Unblock it from the dashboard.`
+   Windows refuses to switch off any keyboard while it is in use, so
+   Continuum blocks the device itself.
 4. The rest of the payload types into the lock screen's password box. It
-   never presses Enter, so no sign-in is attempted. **Unplug the
-   Digispark**, clear the password box and sign in with your own keyboard.
+   never presses Enter, so no sign-in is attempted. Clear the password
+   box and sign in with your own keyboard. **Leave the Digispark
+   plugged in.**
 5. A Windows notification, **Continuum: device blocked**, says the device
-   was blocked (`workstation_locked`). On the Live status page the
-   Digispark has a red `BLOCKED` badge.
+   was blocked (`locked_and_quarantined`). On the Live status page the
+   Digispark has a red `BLOCKED` badge, the note "blocked by Continuum,
+   any key press locks the screen", and an **Unblock device** button.
+6. Replug the Digispark. The screen locks again at its first keystroke,
+   without waiting for 40 presses: the device stays blocked.
 
 Say: the moment the cadence stops looking human, the session locks, so
 anything typed after that goes into the password box, not into a
 terminal. Windows does not allow a keyboard to be disabled while it is
-in use (it reports it as a critical system device), so physically
-removing the device is what makes containment permanent.
+in use, so Continuum blocks it itself: any key press from that device
+locks the screen until someone unblocks it on the dashboard. Unplugging
+it is what stops it typing at all.
 
 ## c) The incident in the dashboard (1:40 to 2:30)
 
@@ -85,7 +90,7 @@ Expected:
 - The newest incident is selected and shown in the panel below the table:
   the device name, a red `BLOCKED` badge and a `Burst injection` badge.
 - The details include the anomaly score against the threshold and the
-  action taken (`locked and disabled`).
+  action taken (`locked and quarantined`).
 - **First keystroke to block** shows a figure around a few hundred ms and
   "40 key presses". **First keystroke to lock** is slightly later.
 - The **Incidents per day** chart has today's bar.
@@ -153,21 +158,28 @@ them back, and it needs 40 presses before it can block anything.
 
 Unplug the randomized board.
 
-## g) Release everything (4:30 to 5:00)
+## g) Unblock, and release everything (4:30 to 5:00)
 
-Open a second PowerShell **as Administrator** in the repository folder and
-run:
+Unplug the burst Digispark. On the **Live status** page, click
+**Unblock device** under it (or open its incident on the **Incidents**
+page and use **Unblock device** there).
+
+Expected:
+- Within about a second the runtime window prints `Unblocked ...` and the
+  badge leaves `BLOCKED`.
+
+Then show the command that releases everything at once. Open a second
+PowerShell **as Administrator** in the repository folder and run:
 
 ```
 .\tasks.ps1 release-all
 ```
 
 Expected:
-- The command prints `Released 0 device(s).` Nothing was left disabled:
-  Windows refused to disable the keyboard in part b, and you unplugged
-  it.
+- The command prints `Released 0 device(s).`, since you already
+  unblocked the only blocked device.
 
-Say: this one command re-enables everything Continuum has disabled,
+Say: this one command releases everything Continuum has blocked,
 whatever each device's timer says. Even without it, every device is
 released automatically after 10 minutes, and the runtime releases
 everything when it starts and when it stops. These rails exist so that a
@@ -191,5 +203,5 @@ its final log; close it when done.
 | The runtime says it is waiting for a trained model | Record your typing on the dashboard's Train page and click Train model; the runtime picks it up within seconds. |
 | Dashboard says it cannot reach the connector | The API window closed or failed; check `data\logs\api.log`. |
 | IncidentRAG says it could not get an answer from Groq | Check the internet connection and that `GROQ_API_KEY` in `.env` is set, then restart with `stop-all` and `run-all`. With `llm_provider: ollama`, start Ollama and check `ollama list` shows the model. |
-| Your own typing got blocked | Unlock, run `.\tasks.ps1 release-all` from an elevated prompt, record another baseline session that includes fast typing, then retrain. |
+| Your own typing got blocked | Unlock with another keyboard, click **Unblock device** under it on the Live status page (or run `.\tasks.ps1 release-all` from an elevated prompt), then record another baseline session that includes fast typing and retrain. Add your own keyboards to the allowlist on the Settings page so they are never blocked. |
 | The Digispark is not recognised at all | See the driver section in `tools/attacks/README.md`. |

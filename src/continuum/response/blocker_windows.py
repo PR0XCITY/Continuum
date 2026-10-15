@@ -249,24 +249,30 @@ class DisabledDeviceRecord:
     reason: str
     disabled_at: datetime
     auto_release_at: datetime
+    # True when Windows refused to disable the device (it does for every
+    # keyboard in use) and Continuum blocks it itself instead: the runtime
+    # locks the workstation on any keystroke from it until it is released.
+    quarantined: bool = False
 
-    def to_json(self) -> dict[str, str]:
+    def to_json(self) -> dict[str, object]:
         return {
             "requested_instance_id": self.requested_instance_id,
             "disabled_instance_id": self.disabled_instance_id,
             "reason": self.reason,
             "disabled_at": self.disabled_at.astimezone(UTC).isoformat(),
             "auto_release_at": self.auto_release_at.astimezone(UTC).isoformat(),
+            "quarantined": self.quarantined,
         }
 
     @classmethod
-    def from_json(cls, data: dict[str, str]) -> DisabledDeviceRecord:
+    def from_json(cls, data: dict[str, object]) -> DisabledDeviceRecord:
         return cls(
-            requested_instance_id=data["requested_instance_id"],
-            disabled_instance_id=data["disabled_instance_id"],
-            reason=data["reason"],
-            disabled_at=datetime.fromisoformat(data["disabled_at"]),
-            auto_release_at=datetime.fromisoformat(data["auto_release_at"]),
+            requested_instance_id=str(data["requested_instance_id"]),
+            disabled_instance_id=str(data["disabled_instance_id"]),
+            reason=str(data["reason"]),
+            disabled_at=datetime.fromisoformat(str(data["disabled_at"])),
+            auto_release_at=datetime.fromisoformat(str(data["auto_release_at"])),
+            quarantined=bool(data.get("quarantined", False)),
         )
 
 
@@ -294,6 +300,9 @@ class BlockResult:
     reason: str
     disabled_instance_id: str | None
     dry_run: bool = False
+    # Blocked by Continuum rather than disabled by Windows; see
+    # DisabledDeviceRecord.quarantined.
+    quarantined: bool = False
 
 
 class DeviceBlocker:
@@ -326,8 +335,18 @@ class DeviceBlocker:
         """The real device nodes currently disabled (child or parent)."""
         return [record.disabled_instance_id for record in self._records.values()]
 
+    @property
+    def blocked_instance_ids(self) -> list[str]:
+        """The devices currently blocked, disabled or quarantined, as requested."""
+        return list(self._records)
+
     def is_disabled(self, requested_instance_id: str) -> bool:
+        """Blocked, either disabled by Windows or quarantined by Continuum."""
         return requested_instance_id in self._records
+
+    def is_quarantined(self, requested_instance_id: str) -> bool:
+        record = self._records.get(requested_instance_id)
+        return record is not None and record.quarantined
 
     def disable(
         self,
@@ -342,9 +361,10 @@ class DeviceBlocker:
             existing = self._records[instance_id]
             return BlockResult(
                 success=True,
-                reason="already disabled",
+                reason="already blocked",
                 disabled_instance_id=existing.disabled_instance_id,
                 dry_run=self._dry_run,
+                quarantined=existing.quarantined,
             )
 
         decision = evaluate_block_decision(
@@ -376,13 +396,17 @@ class DeviceBlocker:
             )
 
         disabled_id = self._disable_with_fallback(instance_id)
-        if disabled_id is None:
-            _logger.error("failed to disable %s (tried the device and its parent)", instance_id)
-            return BlockResult(
-                success=False,
-                reason="pnputil disable failed",
-                disabled_instance_id=None,
-                dry_run=False,
+        quarantined = disabled_id is None
+        if quarantined:
+            # Windows refuses to disable a keyboard in use. Block it in
+            # Continuum instead: same record, same release paths (unblock,
+            # auto-release, release-all), and the runtime locks the
+            # workstation on any keystroke from it while it stays blocked.
+            disabled_id = instance_id
+            _logger.warning(
+                "Windows would not disable %s; quarantined instead: any keystroke from it "
+                "locks the workstation until it is unblocked or auto-released",
+                instance_id,
             )
 
         now = datetime.now(UTC)
@@ -392,14 +416,20 @@ class DeviceBlocker:
             reason=reason,
             disabled_at=now,
             auto_release_at=now + timedelta(seconds=self._auto_release_timeout_seconds),
+            quarantined=quarantined,
         )
         self._records[instance_id] = record
         self._persist()
-        _logger.info(
-            "disabled %s (node actually disabled: %s): %s", instance_id, disabled_id, reason
-        )
+        if not quarantined:
+            _logger.info(
+                "disabled %s (node actually disabled: %s): %s", instance_id, disabled_id, reason
+            )
         return BlockResult(
-            success=True, reason=reason, disabled_instance_id=disabled_id, dry_run=False
+            success=True,
+            reason="quarantined" if quarantined else reason,
+            disabled_instance_id=disabled_id,
+            dry_run=False,
+            quarantined=quarantined,
         )
 
     def _disable_with_fallback(self, instance_id: str) -> str | None:
@@ -447,10 +477,15 @@ class DeviceBlocker:
         if record is None:
             return False
 
-        if self._dry_run:
-            _logger.info("dry_run: would enable %s", record.disabled_instance_id)
+        if self._dry_run or record.quarantined:
+            # Nothing was changed in Windows: lifting the block is all there is.
             del self._records[requested_instance_id]
             self._persist()
+            _logger.info(
+                "%s %s",
+                "unblocked" if record.quarantined else "dry_run: would enable",
+                record.disabled_instance_id,
+            )
             return True
 
         success = self._try_enable(record.disabled_instance_id)

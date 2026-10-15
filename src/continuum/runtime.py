@@ -74,6 +74,7 @@ from continuum.recording import (
 from continuum.response.alerts import notify
 from continuum.response.blocker_windows import (
     DEFAULT_DISABLED_DEVICES_PATH,
+    BlockResult,
     DeviceBlocker,
     is_elevated,
 )
@@ -162,7 +163,11 @@ def build_incident(
         RecommendedFollowup.ISOLATE_DEVICE,
         RecommendedFollowup.REVIEW_PHYSICAL_ACCESS_LOGS,
     ]
-    if action_taken in (ActionTaken.DEVICE_DISABLED, ActionTaken.LOCKED_AND_DISABLED):
+    if action_taken in (
+        ActionTaken.DEVICE_DISABLED,
+        ActionTaken.LOCKED_AND_DISABLED,
+        ActionTaken.LOCKED_AND_QUARANTINED,
+    ):
         followups.append(RecommendedFollowup.NOTIFY_SECURITY_TEAM)
 
     notes = (
@@ -228,11 +233,18 @@ def respond_to_block(
     fails or a safety rail refuses it, so an attack is never left
     running unchecked.
 
+    Windows refuses to disable a keyboard in use, so the disable usually
+    ends as a quarantine (see DeviceBlocker.disable): the device stays
+    connected but Continuum treats it as blocked, locking on any further
+    keystroke from it. A quarantine always comes with a lock, since the
+    device can still type.
+
     If timings is given, the wall time spent locking and disabling, in
     milliseconds from the start of this call, is written into it.
     """
     locked = False
     disabled = False
+    quarantined = False
     started = time.perf_counter()
 
     def lock() -> bool:
@@ -241,21 +253,30 @@ def respond_to_block(
             timings["lock_done_ms"] = (time.perf_counter() - started) * 1000
         return done
 
-    def disable() -> bool:
+    def disable() -> BlockResult:
         return blocker.disable(
             device.instance_id,
             is_usb=device.is_usb,
             allowlist=allowlist,
             other_enabled_keyboard_count=other_enabled_keyboard_count_value,
             reason=f"anomaly_score={result.anomaly_score:.3f} threshold={result.threshold:.3f}",
-        ).success
+        )
 
     if effective_mode in ("lock_only", "lock_and_disable"):
         locked = lock()
     if effective_mode in ("lock_and_disable", "disable_only"):
-        disabled = disable()
+        block = disable()
+        quarantined = block.success and block.quarantined
+        disabled = block.success and not block.quarantined
     if effective_mode == "disable_only" and not disabled:
-        logger.warning("could not disable %s; locking the workstation instead", device.device_id)
+        if quarantined:
+            logger.warning(
+                "Windows would not disable %s; locking and keeping it blocked", device.device_id
+            )
+        else:
+            logger.warning(
+                "could not disable %s; locking the workstation instead", device.device_id
+            )
         locked = lock()
 
     if timings is not None:
@@ -263,6 +284,8 @@ def respond_to_block(
 
     if locked and disabled:
         return ActionTaken.LOCKED_AND_DISABLED
+    if locked and quarantined:
+        return ActionTaken.LOCKED_AND_QUARANTINED
     if locked:
         return ActionTaken.WORKSTATION_LOCKED
     if disabled:
@@ -503,6 +526,7 @@ def describe_devices(capture: CaptureSource, blocker: DeviceBlocker) -> list[dic
             "bus_type": device.bus_type,
             "is_usb": device.is_usb,
             "disabled": blocker.is_disabled(device.instance_id),
+            "quarantined": blocker.is_quarantined(device.instance_id),
         }
         for device in devices
     ]
@@ -632,6 +656,36 @@ def trial_timing_summary(
 # --- the main loop ---------------------------------------------------------
 
 
+# A blocked device mashing keys would otherwise call LockWorkStation
+# hundreds of times a second; once per interval is enough to keep the
+# session locked.
+QUARANTINE_RELOCK_INTERVAL_SECONDS = 2.0
+
+
+def enforce_quarantine(
+    event: KeyEvent,
+    locked_at: dict[str, float],
+    *,
+    now: float | None = None,
+) -> bool:
+    """Lock the workstation when a quarantined device presses a key.
+
+    Raw Input cannot hold a keystroke back, so the key still arrives,
+    but the session locks at once and anything further lands in the
+    lock screen's password box. Returns True if a lock was requested.
+    """
+    if event.event_type != "down" or event.is_repeat:
+        return False
+    current = time.monotonic() if now is None else now
+    last = locked_at.get(event.device_id)
+    if last is not None and current - last < QUARANTINE_RELOCK_INTERVAL_SECONDS:
+        return False
+    locked_at[event.device_id] = current
+    logger.warning("blocked device %s typed; locking the workstation", event.device_id)
+    lock_workstation()
+    return True
+
+
 def process_event(
     event: KeyEvent,
     *,
@@ -648,11 +702,17 @@ def process_event(
     allowlist: list[str],
     connector_db_path: Path,
     recorder: BaselineRecorder | None = None,
+    quarantine_locked_at: dict[str, float] | None = None,
 ) -> None:
+    if quarantine_locked_at is None:
+        quarantine_locked_at = {}
     # Recording a training baseline: collect the typing, never score it, so
     # fast training typing can never trigger a lock or a disable.
     if recorder is not None and recorder.active:
         recorder.record(event)
+        return
+    if blocker.is_quarantined(event.device_id):
+        enforce_quarantine(event, quarantine_locked_at)
         return
     if scorer is None:  # no trained model yet: nothing to detect against
         return
@@ -869,6 +929,7 @@ def main(argv: list[str] | None = None) -> None:
 
     device_buffers: dict[str, _DeviceBuffer] = {}
     pending_since: dict[str, datetime] = {}
+    quarantine_locked_at: dict[str, float] = {}
 
     identity = RuntimeIdentity(
         started_at=datetime.now(UTC).isoformat(),
@@ -896,6 +957,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         last_maintenance = time.monotonic()
         last_command_poll = 0.0
+        blocked_ids = set(blocker.blocked_instance_ids)
         while True:
             try:
                 event = capture.events.get(timeout=CAPTURE_POLL_TIMEOUT_SECONDS)
@@ -918,15 +980,32 @@ def main(argv: list[str] | None = None) -> None:
                     allowlist=settings.response.allowlist,
                     connector_db_path=connector_db_path,
                     recorder=recorder,
+                    quarantine_locked_at=quarantine_locked_at,
                 )
 
             now_monotonic = time.monotonic()
             if now_monotonic - last_command_poll >= COMMAND_POLL_INTERVAL_SECONDS:
                 was_recording = recorder.active
                 poll_baseline_commands(connector_db_path, recorder, user=user)
+                poll_unblock_commands(connector_db_path, blocker)
                 if recorder.active != was_recording:
                     print("Training: recording typing." if recorder.active
                           else "Training: session saved; detection resumed.")
+                # Show a block or an unblock on the dashboard within a
+                # second rather than at the next heartbeat.
+                now_blocked = set(blocker.blocked_instance_ids)
+                if now_blocked != blocked_ids:
+                    for instance_id in sorted(now_blocked - blocked_ids):
+                        print(f"Blocked {instance_id}. Unblock it from the dashboard.")
+                    for instance_id in sorted(blocked_ids - now_blocked):
+                        print(f"Unblocked {instance_id}.")
+                    blocked_ids = now_blocked
+                    write_runtime_status(
+                        connector_db_path,
+                        identity,
+                        state="running",
+                        devices=describe_devices(capture, blocker),
+                    )
                 last_command_poll = now_monotonic
             if now_monotonic - last_maintenance >= MAINTENANCE_INTERVAL_SECONDS:
                 if consume_stop_request():

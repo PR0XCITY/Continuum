@@ -311,3 +311,18 @@ def test_typing_box_escapes_the_passage_and_has_no_network_code():
     assert "&lt;img" in markup
     for network_call in ("fetch(", "XMLHttpRequest", "sendBeacon", "WebSocket", "postMessage"):
         assert network_call not in markup
+
+
+def test_blocked_note_says_how_a_device_is_blocked():
+    assert helpers.blocked_note({"disabled": False}) == ""
+    assert helpers.blocked_note({"disabled": True, "quarantined": False}) == "disabled in Windows"
+    assert "any key press locks" in helpers.blocked_note({"disabled": True, "quarantined": True})
+
+
+def test_merge_devices_carries_the_quarantined_flag():
+    rows = helpers.merge_devices(
+        [{"device_id": "a", "name": "Digispark", "disabled": True, "quarantined": True}], []
+    )
+
+    assert rows[0]["quarantined"] is True
+    assert rows[0]["badge"] == "blocked"

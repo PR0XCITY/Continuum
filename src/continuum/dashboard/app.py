@@ -164,6 +164,29 @@ def _sidebar(client: ConnectorClient) -> str:
 # --- page 1: live status -------------------------------------------------------
 
 
+def _unblock_button(
+    target: Any, client: ConnectorClient, device: dict[str, Any], *, runtime_running: bool
+) -> None:
+    """An Unblock button under a blocked device's card on the Live status page."""
+    if target.button(
+        "Unblock device",
+        key=f"live_unblock_{device['device_id']}",
+        type="primary",
+        use_container_width=True,
+        help="Only once the device has been examined and is known to be safe.",
+    ):
+        try:
+            client.unblock(device["device_id"])
+        except ApiError as error:
+            target.error(str(error))
+        else:
+            target.success(
+                "Unblock queued. The runtime applies it within a second."
+                if runtime_running
+                else "Unblock queued. The runtime is not running, so it applies when it starts."
+            )
+
+
 @st.fragment(run_every=LIVE_REFRESH_SECONDS)
 def _live_panel(client: ConnectorClient) -> None:
     now = datetime.now(UTC)
@@ -252,7 +275,7 @@ def _live_panel(client: ConnectorClient) -> None:
             )
             notes = []
             if device["disabled"]:
-                notes.append("disabled by Continuum")
+                notes.append(helpers.blocked_note(device))
             if not device["attached"]:
                 notes.append("no longer attached")
             body = (
@@ -265,7 +288,12 @@ def _live_panel(client: ConnectorClient) -> None:
                 f'{style.escape(helpers.format_relative_age(device.get("updated_at"), now=now))}'
                 f'{style.escape(", " + ", ".join(notes) if notes else "")}</div>'
             )
-            device_columns[index % 3].markdown(style.card(body), unsafe_allow_html=True)
+            column = device_columns[index % 3]
+            column.markdown(style.card(body), unsafe_allow_html=True)
+            if device["disabled"]:
+                _unblock_button(
+                    column, client, device, runtime_running=bool(runtime["running"])
+                )
 
     st.subheader("Inter-key interval, last 60 seconds")
     if not history:
@@ -364,7 +392,7 @@ def _incident_detail(client: ConnectorClient, incident: dict, runtime_running: b
     )
     with right.popover("Unblock device", use_container_width=True):
         st.write(
-            "Re-enable this device now instead of waiting for the automatic release. "
+            "Lift the block on this device now instead of waiting for the automatic release. "
             "Only do this once the device has been examined and is known to be safe."
         )
         if not runtime_running:
@@ -935,7 +963,7 @@ def page_settings(client: ConnectorClient) -> None:
 
     st.subheader("Allowlist")
     st.caption(
-        "Devices listed here are never disabled. Use the full Windows device instance id, not "
+        "Devices listed here are never blocked. Use the full Windows device instance id, not "
         "just the vendor and product id, which any attack tool can imitate."
     )
     attached = {
