@@ -1,0 +1,143 @@
+"""Ask IncidentRAG: cited answers from incidents and playbooks, or an honest refusal."""
+
+from __future__ import annotations
+
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QPlainTextEdit,
+    QPushButton,
+    QVBoxLayout,
+)
+
+from continuum.dashboard import helpers
+from continuum.desktop.context import AppContext
+from continuum.desktop.widgets import Card, ConfidenceMeter, Page, clear_layout, plain_label
+from continuum.desktop.worker import run_async
+
+PLACEHOLDER = "For example: What should I do after a burst injection was blocked?"
+
+
+class AskPage(Page):
+    def __init__(self, ctx: AppContext) -> None:
+        super().__init__(
+            "Ask IncidentRAG",
+            "Answers come only from recorded incidents and the playbooks in data/corpus, with "
+            "numbered citations. When the evidence is weak, IncidentRAG says so instead of "
+            "guessing.",
+        )
+        self.ctx = ctx
+        rag = ctx.settings.rag
+        self.threshold = rag.confidence_threshold
+        self.content.addWidget(
+            plain_label(helpers.llm_disclosure(rag.llm_provider, rag), name="Hint")
+        )
+
+        self.question = QPlainTextEdit()
+        self.question.setPlaceholderText(PLACEHOLDER)
+        self.question.setFixedHeight(96)
+        self.content.addWidget(self.question)
+
+        buttons = QHBoxLayout()
+        self.ask_button = QPushButton("Ask")
+        self.ask_button.setObjectName("Primary")
+        self.ask_button.clicked.connect(self.ask)
+        self.clear_button = QPushButton("Clear conversation")
+        self.clear_button.clicked.connect(self._clear)
+        self.status = plain_label("", name="Hint")
+        buttons.addWidget(self.ask_button)
+        buttons.addWidget(self.clear_button)
+        buttons.addWidget(self.status, 1)
+        self.content.addLayout(buttons)
+
+        self.tip = plain_label(
+            'Tip: on the Incidents page, "Ask IncidentRAG about this" fills in a question about '
+            "the selected incident.",
+            name="Hint",
+        )
+        self.content.addWidget(self.tip)
+        self.history = QVBoxLayout()
+        self.history.setSpacing(12)
+        self.content.addLayout(self.history)
+        self.content.addStretch(1)
+
+    def set_question(self, question: str) -> None:
+        self.question.setPlainText(question)
+        self.question.setFocus()
+
+    def ask(self) -> None:
+        question = self.question.toPlainText().strip()
+        if not question:
+            return
+        self.ask_button.setEnabled(False)
+        self.status.setText("Searching incidents and playbooks...")
+        run_async(
+            lambda: self.ctx.client.query(question),
+            lambda response: self._answered(question, response),
+            self._failed,
+        )
+
+    def _failed(self, message: str) -> None:
+        self.ask_button.setEnabled(True)
+        self.status.setText("")
+        card = Card(title="Could not get an answer", amber=True)
+        card.add_text(message)
+        self.history.insertWidget(0, card)
+
+    def _answered(self, question: str, response: dict) -> None:
+        self.ask_button.setEnabled(True)
+        self.status.setText("")
+        self.tip.hide()
+        exchange = Card()
+        exchange.body.addWidget(plain_label("YOU ASKED", name="Eyebrow"))
+        exchange.add_text(question)
+        self.history.insertWidget(0, self._response_card(response))
+        self.history.insertWidget(0, exchange)
+
+    def _response_card(self, response: dict) -> Card:
+        confidence = float(response["confidence"])
+        meter_note = (
+            f"Confidence {confidence:.2f}. The line marks the answer threshold, "
+            f"{self.threshold:.2f}."
+        )
+        if response["abstained"]:
+            card = Card(title="Insufficient evidence", eyebrow="IncidentRAG", amber=True)
+            card.add_text(response.get("message") or "Not enough evidence to answer reliably.")
+            card.body.addWidget(ConfidenceMeter(confidence, self.threshold))
+            card.add_text(meter_note, name="Hint")
+            sources = response.get("citations") or []
+            if sources:
+                card.body.addWidget(plain_label("NEAREST SOURCES TO READ YOURSELF", name="Eyebrow"))
+                for source in sources:
+                    card.add_text(
+                        f"{source['title']}  ({source['doc_id']}, similarity "
+                        f"{source['score']:.2f})"
+                    )
+            else:
+                card.add_text("No related sources were found.", name="Hint")
+            return card
+
+        card = Card(eyebrow="IncidentRAG")
+        card.add_text(response.get("answer") or "")
+        card.body.addWidget(ConfidenceMeter(confidence, self.threshold))
+        card.add_text(meter_note, name="Hint")
+        if response.get("generated_by"):
+            card.add_text(f"Generated by {response['generated_by']}", name="Hint")
+        for number, citation in enumerate(response.get("citations") or [], start=1):
+            toggle = QPushButton(
+                f"Source {number}: {helpers.plain_label(citation['title'])}, similarity "
+                f"{citation['score']:.2f}"
+            )
+            toggle.setCheckable(True)
+            toggle.setStyleSheet("text-align:left;")
+            snippet = Card()
+            snippet.add_text(citation["doc_id"], name="Mono")
+            snippet.add_text(citation["snippet"])
+            snippet.hide()
+            toggle.toggled.connect(snippet.setVisible)
+            card.body.addWidget(toggle)
+            card.body.addWidget(snippet)
+        return card
+
+    def _clear(self) -> None:
+        clear_layout(self.history)
+        self.tip.show()

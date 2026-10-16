@@ -43,6 +43,10 @@ run-dashboard:
 run-runtime:
     {{tasks}} run-runtime
 
+# Open the desktop app (window and tray icon); it starts the API and the runtime.
+run-app:
+    {{tasks}} run-app
+
 # Start the API, the dashboard and the elevated runtime, each in its own window.
 run-all:
     {{tasks}} run-all

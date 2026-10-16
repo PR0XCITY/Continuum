@@ -6,7 +6,7 @@ contain the device, record the incident, and answer questions about it.**
 ![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB)
 ![Platform Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)
 ![LLM: Groq or local Ollama](https://img.shields.io/badge/LLM-Groq%20or%20local%20Ollama-346538)
-![Tests: pytest](https://img.shields.io/badge/tests-568%20passing-346538)
+![Tests: pytest](https://img.shields.io/badge/tests-575%20passing-346538)
 
 Devices such as the USB Rubber Ducky, Digispark and Bash Bunny pretend to be a keyboard and
 type a pre-recorded attack faster than any person. Windows trusts them like any other
@@ -69,7 +69,9 @@ flowchart LR
 - **Retrieval Engine and Confidence Scorer:** hybrid retrieval over incidents and playbooks,
   a cited answer from an LLM (Qwen3 on Groq by default, or Llama 3.1 8B in local Ollama), and a confidence gate that refuses when the evidence is
   weak.
-- **Dashboard:** live device status with an Unblock button, remote-access status, incidents,
+- **Desktop app and dashboard:** a native Windows app (PySide6) with a tray icon, or the same
+  pages in the browser (Streamlit): live device status with an Unblock button, remote-access
+  status, incidents,
   Ask IncidentRAG,
   training on your own typing, calibration and settings.
 
@@ -177,11 +179,27 @@ type in the page never leaves your browser. Detection is paused while a session 
 ### 4. Check everything works
 
 ```powershell
-.\tasks.ps1 test    # 568 tests; every Windows call is mocked
+.\tasks.ps1 test    # 575 tests; every Windows call is mocked
 .\tasks.ps1 lint
 ```
 
 ## Running
+
+### The desktop app
+
+```powershell
+.\tasks.ps1 run-app
+```
+
+Opens Continuum as a Windows app with a tray icon (the shield by the clock). It starts the
+connector API in the background, asks once at the Windows administrator prompt to start
+protection, and has the same six pages as the browser dashboard: Live status, Incidents,
+Ask IncidentRAG, Train, Calibration and Settings. Closing the window keeps Continuum in the
+tray; right-click the shield for Start or Stop protection, Release all devices, and Quit.
+Slow work such as IncidentRAG answers and model training runs in the background, so the
+window never freezes.
+
+### The browser dashboard and separate windows
 
 ```powershell
 .\tasks.ps1 run-all     # API, dashboard and the elevated runtime, each in its own window
@@ -396,7 +414,8 @@ src/continuum/
   runtime.py       the elevated main loop tying the three together
   connector/       FastAPI service and SQLite (Connector API)
   rag/             ingest, retrieval, answers, confidence gate (IncidentRAG)
-  dashboard/       Streamlit dashboard
+  desktop/         native Windows app (PySide6): window, tray icon, the six pages
+  dashboard/       Streamlit dashboard, and the API client and helpers the app shares
 tools/             baseline recording, training, evaluation, simulators, Digispark sketches
 tests/             pytest suite, including an end-to-end integration test
 tasks.ps1          every command (justfile mirrors it)

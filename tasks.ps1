@@ -12,6 +12,7 @@
     .\tasks.ps1 run-api           connector API in this window
     .\tasks.ps1 run-dashboard     dashboard in this window
     .\tasks.ps1 run-runtime       HID Firewall in this window (run from an elevated prompt)
+    .\tasks.ps1 run-app           the desktop app: window and tray icon, starts the API and runtime
     .\tasks.ps1 run-all           API, dashboard and an elevated runtime, each in its own window
     .\tasks.ps1 stop-all          stop all three cleanly (the runtime releases every device first)
     .\tasks.ps1 status            what is running
@@ -26,7 +27,7 @@ param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet(
         'setup', 'test', 'lint', 'record-baseline', 'train-model',
-        'run-api', 'run-dashboard', 'run-runtime', 'run-all', 'stop-all', 'status',
+        'run-api', 'run-dashboard', 'run-runtime', 'run-app', 'run-all', 'stop-all', 'status',
         'release-all', 'evaluate',
         'window-api', 'window-dashboard', 'window-runtime'
     )]
@@ -319,6 +320,15 @@ switch ($Task) {
         Assert-Venv
         Write-Host 'The runtime needs an elevated (Administrator) prompt to disable devices.'
         Invoke-Logged 'runtime' $RuntimeArgs
+    }
+    'run-app'          {
+        # pythonw.exe: a window and a tray icon, no console. The app starts the API
+        # hidden and the runtime through one administrator prompt.
+        Assert-Venv
+        Assert-Env
+        $pythonw = Join-Path $Root '.venv\Scripts\pythonw.exe'
+        Start-Process -FilePath $pythonw -ArgumentList @('-m', 'continuum.desktop') -WorkingDirectory $Root
+        Write-Host 'Continuum is opening. It lives in the tray (the shield icon by the clock).'
     }
     'run-all'          { Invoke-RunAll }
     'stop-all'         { Invoke-StopAll }

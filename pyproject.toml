@@ -23,6 +23,7 @@ dependencies = [
     "chromadb==0.5.23",
     "httpx==0.28.1",
     "streamlit==1.41.1",
+    "PySide6-Essentials==6.8.1",
     "PyYAML==6.0.2",
     "python-dotenv==1.0.1",
     "winotify==1.1.0 ; sys_platform == 'win32'",
