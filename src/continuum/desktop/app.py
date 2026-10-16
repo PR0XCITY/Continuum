@@ -330,7 +330,7 @@ def main() -> int:
     QApplication.setQuitOnLastWindowClosed(False)
     app = QApplication(sys.argv)
     app.setWindowIcon(shield_icon())
-    app.setStyleSheet(theme.STYLE_SHEET)
+    theme.apply_theme(app)
 
     if _already_running():
         return 0

@@ -13,8 +13,9 @@ from collections.abc import Iterable, Sequence
 from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QTextCharFormat
 from PySide6.QtWidgets import (
+    QCalendarWidget,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -52,6 +53,20 @@ def plain_label(text: str = "", *, name: str | None = None, wrap: bool = True) -
     if name:
         label.setObjectName(name)
     return label
+
+
+def style_calendar(calendar: QCalendarWidget) -> None:
+    """Light, quiet date picker: no red weekends, no week numbers, muted headers."""
+    calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+    calendar.setGridVisible(False)
+    plain = QTextCharFormat()
+    plain.setForeground(QColor(theme.TEXT))
+    for day in (Qt.DayOfWeek.Saturday, Qt.DayOfWeek.Sunday):
+        calendar.setWeekdayTextFormat(day, plain)
+    header = QTextCharFormat()
+    header.setForeground(QColor(theme.MUTED))
+    header.setBackground(QColor(theme.SURFACE))
+    calendar.setHeaderTextFormat(header)
 
 
 def clear_layout(layout: QLayout) -> None:

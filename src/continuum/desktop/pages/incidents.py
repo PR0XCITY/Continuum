@@ -32,6 +32,7 @@ from continuum.desktop.widgets import (
     key_values,
     make_table,
     plain_label,
+    style_calendar,
     verdict_badge,
 )
 from continuum.desktop.worker import run_async
@@ -86,6 +87,7 @@ class IncidentsPage(Page):
         self.end = QDateEdit(today)
         for edit in (self.start, self.end):
             edit.setCalendarPopup(True)
+            style_calendar(edit.calendarWidget())
             edit.setDisplayFormat("yyyy-MM-dd")
             edit.setMaximumDate(today)
             edit.dateChanged.connect(self.refresh)

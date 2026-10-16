@@ -189,6 +189,32 @@ def test_request_runtime_stop_writes_the_stop_file(tmp_path, monkeypatch):
     assert (tmp_path / "runtime.stop").exists()
 
 
+# --- always light -------------------------------------------------------------------
+
+
+def test_the_app_stays_light_when_windows_is_in_dark_mode(qapp):
+    from PySide6.QtGui import QColor, QPalette
+
+    from continuum.desktop import theme
+
+    # What Windows dark mode hands Qt: dark surfaces and light text.
+    dark = QPalette()
+    for role, colour in ((QPalette.ColorRole.Base, "#2B2B2B"),
+                         (QPalette.ColorRole.Window, "#202020"),
+                         (QPalette.ColorRole.Button, "#2B2B2B"),
+                         (QPalette.ColorRole.Text, "#FFFFFF")):
+        dark.setColor(role, QColor(colour))
+    qapp.setPalette(dark)
+
+    theme.apply_theme(qapp)
+    palette = qapp.palette()
+
+    for role in (QPalette.ColorRole.Base, QPalette.ColorRole.Window,
+                 QPalette.ColorRole.Button):
+        assert palette.color(role).lightness() > 200, role
+    assert palette.color(QPalette.ColorRole.Text).lightness() < 100
+
+
 # --- untrusted text -------------------------------------------------------------------
 
 

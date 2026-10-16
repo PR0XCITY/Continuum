@@ -3,9 +3,18 @@
 Warm monochrome, 1px hairline borders, a serif for page titles and muted
 pastel status badges, taken from continuum.dashboard.style so the app and
 the browser dashboard look like one product. System fonts only.
+
+The app is always light. On a PC in Windows dark mode, Qt would otherwise
+paint every widget the style sheet does not cover (lists, radio buttons,
+check boxes, the calendar popup) with dark colours, so apply_theme forces
+the light colour scheme, the Fusion style and a full light palette.
 """
 
 from __future__ import annotations
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPalette
+from PySide6.QtWidgets import QApplication
 
 from continuum.dashboard.style import (
     BONE,
@@ -46,8 +55,55 @@ __all__ = [
     "SURFACE",
     "TEXT",
     "VERDICT_COLOURS",
+    "apply_theme",
     "badge_colours",
+    "light_palette",
 ]
+
+
+def light_palette() -> QPalette:
+    """Every palette role set from the light tokens, for all colour groups."""
+    palette = QPalette()
+    roles = {
+        QPalette.ColorRole.Window: CANVAS,
+        QPalette.ColorRole.WindowText: TEXT,
+        QPalette.ColorRole.Base: SURFACE,
+        QPalette.ColorRole.AlternateBase: BONE,
+        QPalette.ColorRole.Text: TEXT,
+        QPalette.ColorRole.PlaceholderText: "#A5A4A0",
+        QPalette.ColorRole.Button: SURFACE,
+        QPalette.ColorRole.ButtonText: INK,
+        QPalette.ColorRole.BrightText: SURFACE,
+        QPalette.ColorRole.Highlight: PASTELS["blue"][0],
+        QPalette.ColorRole.HighlightedText: INK,
+        QPalette.ColorRole.ToolTipBase: SURFACE,
+        QPalette.ColorRole.ToolTipText: TEXT,
+        QPalette.ColorRole.Link: PASTELS["blue"][1],
+        QPalette.ColorRole.Light: SURFACE,
+        QPalette.ColorRole.Midlight: BONE,
+        QPalette.ColorRole.Mid: HAIRLINE,
+        QPalette.ColorRole.Dark: "#C9C8C4",
+        QPalette.ColorRole.Shadow: "#B4B3AF",
+    }
+    for role, colour in roles.items():
+        palette.setColor(role, QColor(colour))
+    for role in (
+        QPalette.ColorRole.WindowText,
+        QPalette.ColorRole.Text,
+        QPalette.ColorRole.ButtonText,
+    ):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor("#B4B3AF"))
+    return palette
+
+
+def apply_theme(app: QApplication) -> None:
+    """The light look, whatever the Windows theme."""
+    hints = app.styleHints()
+    if hasattr(hints, "setColorScheme"):
+        hints.setColorScheme(Qt.ColorScheme.Light)
+    app.setStyle("Fusion")
+    app.setPalette(light_palette())
+    app.setStyleSheet(STYLE_SHEET)
 
 
 def badge_colours(colour: str) -> tuple[str, str]:
@@ -231,5 +287,114 @@ QToolTip {{
     background: {SURFACE};
     color: {TEXT};
     border: 1px solid {HAIRLINE};
+}}
+QListWidget {{
+    background: {SURFACE};
+    border: 1px solid {HAIRLINE};
+    border-radius: 6px;
+    padding: 4px;
+    color: {TEXT};
+}}
+QListWidget::item {{
+    padding: 4px 6px;
+}}
+QListWidget::item:selected {{
+    background: {PASTELS["blue"][0]};
+    color: {INK};
+}}
+QRadioButton, QCheckBox {{
+    spacing: 8px;
+    background: transparent;
+}}
+QRadioButton::indicator, QCheckBox::indicator {{
+    width: 14px;
+    height: 14px;
+    background: {SURFACE};
+    border: 1px solid #B4B3AF;
+}}
+QRadioButton::indicator {{
+    border-radius: 8px;
+}}
+QCheckBox::indicator {{
+    border-radius: 3px;
+}}
+QRadioButton::indicator:checked {{
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+        stop:0 {INK}, stop:0.45 {INK}, stop:0.55 {SURFACE}, stop:1 {SURFACE});
+    border: 1px solid {INK};
+}}
+QCheckBox::indicator:checked {{
+    background: {INK};
+    border: 1px solid {INK};
+}}
+QRadioButton::indicator:hover, QCheckBox::indicator:hover {{
+    border-color: {INK};
+}}
+QComboBox QAbstractItemView {{
+    background: {SURFACE};
+    color: {TEXT};
+    border: 1px solid {HAIRLINE};
+    selection-background-color: {PASTELS["blue"][0]};
+    selection-color: {INK};
+}}
+QCalendarWidget QWidget {{
+    background: {SURFACE};
+    color: {TEXT};
+    alternate-background-color: {BONE};
+}}
+QCalendarWidget QWidget#qt_calendar_navigationbar {{
+    background: {BONE};
+    border-bottom: 1px solid {HAIRLINE};
+}}
+QCalendarWidget QToolButton {{
+    background: transparent;
+    color: {INK};
+    border: none;
+    padding: 4px 8px;
+    font-weight: 600;
+}}
+QCalendarWidget QToolButton:hover {{
+    background: {SURFACE};
+    border-radius: 4px;
+}}
+QCalendarWidget QMenu {{
+    background: {SURFACE};
+    color: {TEXT};
+}}
+QCalendarWidget QSpinBox {{
+    background: {SURFACE};
+    color: {INK};
+}}
+QCalendarWidget QAbstractItemView {{
+    background: {SURFACE};
+    color: {TEXT};
+    selection-background-color: {INK};
+    selection-color: {SURFACE};
+    outline: 0;
+}}
+QCalendarWidget QAbstractItemView:disabled {{
+    color: #C9C8C4;
+}}
+QMenu {{
+    background: {SURFACE};
+    color: {TEXT};
+    border: 1px solid {HAIRLINE};
+    padding: 4px;
+}}
+QMenu::item {{
+    padding: 6px 18px;
+    border-radius: 4px;
+}}
+QMenu::item:selected {{
+    background: {BONE};
+    color: {INK};
+}}
+QMenu::separator {{
+    height: 1px;
+    background: {HAIRLINE};
+    margin: 4px 8px;
+}}
+QMessageBox {{
+    background: {CANVAS};
 }}
 """

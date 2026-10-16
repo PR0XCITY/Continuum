@@ -78,8 +78,9 @@ class LivePage(Page):
         remote_row = QHBoxLayout()
         self.remote_card = Card()
         title_row = QHBoxLayout()
-        title_row.addWidget(plain_label("Typing through remote-access tools", name="CardTitle"))
-        title_row.addStretch(1)
+        title_row.addWidget(
+            plain_label("Typing through remote-access tools", name="CardTitle"), 1
+        )
         self.remote_badge = Badge("...", "gray")
         title_row.addWidget(self.remote_badge)
         self.remote_card.body.addLayout(title_row)
@@ -91,7 +92,7 @@ class LivePage(Page):
             "Use this when you are controlling this PC remotely yourself."
         )
         self.remote_button.clicked.connect(self._toggle_remote)
-        remote_row.addWidget(self.remote_button, 1)
+        remote_row.addWidget(self.remote_button, 1, Qt.AlignmentFlag.AlignTop)
         self.content.addLayout(remote_row)
         self._remote_allowed = False
 
