@@ -6,13 +6,15 @@ contain the device, record the incident, and answer questions about it.**
 ![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB)
 ![Platform Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)
 ![LLM: Groq or local Ollama](https://img.shields.io/badge/LLM-Groq%20or%20local%20Ollama-346538)
+![Tests: pytest](https://img.shields.io/badge/tests-539%20passing-346538)
 
 Devices such as the USB Rubber Ducky, Digispark and Bash Bunny pretend to be a keyboard and
 type a pre-recorded attack faster than any person. Windows trusts them like any other
 keyboard. Continuum watches the typing rhythm of every physical keyboard, and when one stops
 looking human it:
 
-1. **locks the workstation and disables that one device** (HID Firewall),
+1. **locks the workstation and blocks that one device**, leaving your own keyboards
+   working (HID Firewall),
 2. **records a structured, validated incident** (Connector API), and
 3. **lets an analyst ask what happened and what to do next**, answered only from the
    incident history and response playbooks, with citations, or an explicit "not enough
@@ -35,7 +37,7 @@ flowchart LR
         CAP -->|timing events| CAE[Cadence Analysis Engine]
         CAE -->|blocked verdict| BAH[Block and Alert Handler]
     end
-    BAH -->|lock + pnputil disable| WIN[Windows]
+    BAH -->|lock, then disable or block| WIN[Windows]
     BAH -->|POST /incidents| API[Connector API<br/>FastAPI + SQLite]
     API -->|ingest queue| RAG[Retrieval Engine<br/>ChromaDB + BM25]
     RAG --> CS[Confidence Scorer]
@@ -59,7 +61,8 @@ flowchart LR
 - **Retrieval Engine and Confidence Scorer:** hybrid retrieval over incidents and playbooks,
   a cited answer from an LLM (Qwen3 on Groq by default, or Llama 3.1 8B in local Ollama), and a confidence gate that refuses when the evidence is
   weak.
-- **Dashboard:** live device status, incidents, Ask IncidentRAG, calibration and settings.
+- **Dashboard:** live device status with an Unblock button, incidents, Ask IncidentRAG,
+  training on your own typing, calibration and settings.
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -165,7 +168,7 @@ type in the page never leaves your browser. Detection is paused while a session 
 ### 4. Check everything works
 
 ```powershell
-.\tasks.ps1 test    # about 470 tests; every Windows call is mocked
+.\tasks.ps1 test    # 539 tests; every Windows call is mocked
 .\tasks.ps1 lint
 ```
 
@@ -192,7 +195,7 @@ Other commands:
 
 | Command | What it does |
 | --- | --- |
-| `.\tasks.ps1 release-all` | The kill switch: re-enables every device Continuum disabled. Run it from an Administrator PowerShell. |
+| `.\tasks.ps1 release-all` | The kill switch: releases every device Continuum blocked or disabled. Run it from an Administrator PowerShell. |
 | `.\tasks.ps1 evaluate` | Reruns every measurement and regenerates `docs/EVALUATION.md`. |
 
 To start Continuum automatically at logon, see [docs/AUTOSTART.md](docs/AUTOSTART.md). It is
@@ -220,12 +223,12 @@ troubleshooting and the safe test procedure.
 results. It covers:
 
 1. normal typing being left alone,
-2. a burst attack locking the screen and disabling the device,
+2. a burst attack locking the screen and blocking the device,
 3. the incident in the dashboard,
 4. IncidentRAG answering with citations,
 5. IncidentRAG refusing an off-topic question,
 6. the evasion case it misses,
-7. releasing everything.
+7. unblocking the device from the dashboard, and releasing everything.
 
 ## Configuration
 
@@ -241,8 +244,8 @@ after a change.
 | `detection.sensitivity` | `5` | 1 (fewest alerts) to 10 (most). 5 uses the model's calibrated threshold unchanged; each step moves it by 0.01. |
 | `response.mode` | `lock_and_disable` | `alert_only`, `lock_only`, `disable_only` (disable the device and leave the PC unlocked, locking only if the disable fails) or `lock_and_disable`. Without elevation the runtime falls back to `lock_only`. |
 | `response.dry_run` | `false` | Log every decision but never lock or disable anything. |
-| `response.allowlist` | `[]` | Device instance ids that are never disabled, such as a barcode scanner. |
-| `response.auto_release_timeout_seconds` | `600` | Every disabled device is re-enabled after this long. |
+| `response.allowlist` | `[]` | Device instance ids that are never blocked, such as a barcode scanner or your own keyboards. |
+| `response.auto_release_timeout_seconds` | `600` | Every blocked or disabled device is released after this long. |
 | `response.allow_non_usb_disable` | `false` | Allow disabling non-USB (for example built-in PS/2) keyboards. |
 | `connector.host`, `connector.port` | `127.0.0.1`, `8731` | Where the API listens. |
 | `connector.database_path` | `data/db/continuum.sqlite3` | The incident database. |
@@ -273,15 +276,15 @@ calibrated threshold; use `sensitivity` to tune it.
   up/down, a press counter and a device id leave the capture layer. Baselines store window
   statistics, never text.
 - **Raw Input, not hooks.** Only Raw Input identifies the physical device, so Continuum can
-  disable the attacking device and leave yours working.
+  block the attacking device and leave yours working.
 - **Least privilege.** Only the runtime is elevated, because disabling devices needs it. The
   API and dashboard run as a normal user, and the elevated process never runs a web server.
-- **Safety rails that no setting can turn off.** Continuum never disables:
+- **Safety rails that no setting can turn off.** Continuum never blocks or disables:
   - the last enabled keyboard,
   - an allowlisted device,
   - a non-USB keyboard (unless configured).
 
-  Every disabled device is re-enabled after a timeout, `--release-all` releases everything
+  Every blocked device is released after a timeout, `--release-all` releases everything
   at once, and the runtime releases everything when it starts and stops. Rules are checked
   in pure code before `pnputil` runs, and results are verified rather than assumed.
 - **Lock before anything else.** Anything an attack types after the lock goes to the lock
@@ -331,6 +334,31 @@ Measured in [docs/EVALUATION.md](docs/EVALUATION.md):
   time.
 - **IncidentRAG can be over-cautious.** It sometimes refuses questions the corpus does
   answer; the confidence threshold may need tuning for your data.
+
+## Related work
+
+Detecting keystroke injection from typing rhythm is an established research idea, and
+Continuum builds on it rather than claiming to have invented it. The closest prior work:
+
+| Work | Approach | How Continuum differs |
+| --- | --- | --- |
+| Barbhuiya, Saikia and Nandi, [An Anomaly Based Approach for HID Attack Detection Using Keystroke Dynamics](https://link.springer.com/chapter/10.1007/978-3-642-35362-8_12) (CSS 2012) | First proposal to detect HID attacks with keystroke dynamics, as anomaly detection. | Same core idea; Continuum adds per-device capture, automatic response and the incident pipeline. |
+| Borges et al., [Keyblock](https://sol.sbc.org.br/index.php/sbseg/article/view/19526) (SBSeg 2017) | Software layer that analyses the typing of newly connected keyboards and disables suspicious ones. | Closest in spirit. Continuum scores every keyboard continuously against the user's own baseline and must work around Windows refusing to disable keyboards. |
+| Neuner et al., [USBlock](https://link.springer.com/chapter/10.1007/978-3-319-95729-6_18) (DBSec 2018) | Rule-based timing analysis of USB packet traffic, on Linux. | Continuum uses a trained model over 17 cadence features instead of fixed rules, on Windows. |
+| Google, [USB Keystroke Injection Protection (ukip)](https://opensource.googleblog.com/2020/03/usb-keystroke-injection-protection.html) (2020) | Linux daemon: blocks a device whose keystroke interarrival time falls under a fixed threshold. | Fixed threshold versus a learned per-user model; Linux driver unbinding versus Windows lock and block. |
+| [DuckHunt](https://github.com/bkbuilt/duckhunt) | Windows script that blocks input when typing speed is too high. | Speed-only heuristic, global rather than per device. |
+| Negi, Rathore and Sadhya, [USB Keypress Injection Attack Detection via Free-Text Keystroke Dynamics](https://ieeexplore.ieee.org/document/9566083/) (SPIN 2021) | Supervised classifiers (Random Forest best) on hold and latency features. | Supervised versus Continuum's unsupervised model trained only on the user's normal typing. |
+| Li et al., [HID Detector](https://www.researchgate.net/publication/385441727_HID_Detector_A_New_Detection_Framework_Against_HID_Attacks_Based_on_Behavior_Features) (ISCC 2024) | Behaviour and side-channel features against HID attacks. | Continuum uses timing only, with no extra hardware. |
+| Lotto, Marchiori and Conti, [QUACK!](https://arxiv.org/abs/2604.15845) (arXiv 2026) | Systematic study of timing-only HID injection detection; shows simple speed heuristics are evaded by slowed or randomised injection. | Agrees with Continuum's measured weakness against randomised injection. |
+| [US11132441B2](https://patents.google.com/patent/US11132441B2/en) (USB-Watch) | Patent: hardware device between keyboard and PC, machine learning on keystroke timing. | Continuum is software only. |
+| [WO2019030748A1](https://patents.google.com/patent/WO2019030748A1/en), [US20220019549A1](https://patents.google.com/patent/US20220019549A1/en) | Patents: detect machine-like typing or descriptor changes, then challenge the user or quarantine the port. | Continuum locks and blocks the one device instead of challenging the user. |
+
+What Continuum adds is the closed loop on a stock Windows PC: Raw Input capture that never
+records key identity, a per-user unsupervised model trained from a page in the dashboard,
+automatic per-device containment with safety rails, schema-validated incident records, and
+a cited, confidence-gated incident-response assistant over those records. No published
+system found combines the detection side with a retrieval-augmented assistant over its own
+incidents.
 
 ## Project layout
 
