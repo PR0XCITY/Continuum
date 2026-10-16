@@ -6,7 +6,7 @@ contain the device, record the incident, and answer questions about it.**
 ![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB)
 ![Platform Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)
 ![LLM: Groq or local Ollama](https://img.shields.io/badge/LLM-Groq%20or%20local%20Ollama-346538)
-![Tests: pytest](https://img.shields.io/badge/tests-539%20passing-346538)
+![Tests: pytest](https://img.shields.io/badge/tests-568%20passing-346538)
 
 Devices such as the USB Rubber Ducky, Digispark and Bash Bunny pretend to be a keyboard and
 type a pre-recorded attack faster than any person. Windows trusts them like any other
@@ -15,8 +15,11 @@ looking human it:
 
 1. **locks the workstation and blocks that one device**, leaving your own keyboards
    working (HID Firewall),
-2. **records a structured, validated incident** (Connector API), and
-3. **lets an analyst ask what happened and what to do next**, answered only from the
+2. **records a structured, validated incident** (Connector API),
+3. **separately, locks the PC when someone types through a remote-access tool** such as AnyDesk or
+   TeamViewer, since software-created keystrokes reach Windows with no physical keyboard
+   behind them,
+4. **lets an analyst ask what happened and what to do next**, answered only from the
    incident history and response playbooks, with citations, or an explicit "not enough
    evidence" when the records do not support an answer (IncidentRAG).
 
@@ -56,12 +59,18 @@ flowchart LR
   any further key press from that device locks the screen again, until you click
   **Unblock device** on the dashboard (see [Known limitations](#known-limitations)). Safety
   rails apply throughout (see [Security design](#security-design)).
+- **Remote-access guard:** keystrokes Windows reports with no device handle come from
+  software, not a keyboard. Three of them within 5 seconds while AnyDesk, TeamViewer,
+  RustDesk, Quick Assist or another listed tool is running locks the PC (optionally also
+  ending the tool's session) and records a `remote_access_input` incident. The dashboard
+  has an **Allow for 30 min** switch for when you are using remote access yourself.
 - **Connector API:** a local FastAPI service, with bearer-token authentication even on
   localhost, that validates and stores every incident.
 - **Retrieval Engine and Confidence Scorer:** hybrid retrieval over incidents and playbooks,
   a cited answer from an LLM (Qwen3 on Groq by default, or Llama 3.1 8B in local Ollama), and a confidence gate that refuses when the evidence is
   weak.
-- **Dashboard:** live device status with an Unblock button, incidents, Ask IncidentRAG,
+- **Dashboard:** live device status with an Unblock button, remote-access status, incidents,
+  Ask IncidentRAG,
   training on your own typing, calibration and settings.
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -168,7 +177,7 @@ type in the page never leaves your browser. Detection is paused while a session 
 ### 4. Check everything works
 
 ```powershell
-.\tasks.ps1 test    # 539 tests; every Windows call is mocked
+.\tasks.ps1 test    # 568 tests; every Windows call is mocked
 .\tasks.ps1 lint
 ```
 
@@ -247,6 +256,12 @@ after a change.
 | `response.allowlist` | `[]` | Device instance ids that are never blocked, such as a barcode scanner or your own keyboards. |
 | `response.auto_release_timeout_seconds` | `600` | Every blocked or disabled device is released after this long. |
 | `response.allow_non_usb_disable` | `false` | Allow disabling non-USB (for example built-in PS/2) keyboards. |
+| `remote.enabled` | `true` | Remote-access typing detection. |
+| `remote.trigger` | `remote_tool_running` | React only while a listed remote-access tool runs, or `any_software_input`. |
+| `remote.response` | `lock` | `alert_only`, `lock`, or `lock_and_end_session` (also ends the tool's processes). |
+| `remote.min_presses`, `remote.window_seconds` | `3`, `5` | Software-generated key presses within this many seconds that count as remote typing. |
+| `remote.allow_minutes` | `30` | How long the dashboard's allow switch lets remote typing through. |
+| `remote.tools` | AnyDesk, TeamViewer, RustDesk, UltraViewer, ScreenConnect, Quick Assist and others | Process names checked; matching ignores case. |
 | `connector.host`, `connector.port` | `127.0.0.1`, `8731` | Where the API listens. |
 | `connector.database_path` | `data/db/continuum.sqlite3` | The incident database. |
 | `connector.auth_token_env_var` | `CONTINUUM_API_TOKEN` | Which environment variable (or `.env` entry) holds the bearer token. |
@@ -332,6 +347,12 @@ Measured in [docs/EVALUATION.md](docs/EVALUATION.md):
 - **The Digispark's bootloader delay is excluded.** It waits about 5 seconds after plug-in
   before typing, so plug-in to lock takes longer than the measured first-keystroke-to-lock
   time.
+- **Remote-access detection needs the tool to type in software.** Tools that send input
+  through `SendInput` (verified with injected keystrokes on Windows 11) are caught; one that
+  installs its own virtual keyboard driver would look like a keyboard instead and fall to
+  the cadence engine. RDP is not covered, since its input arrives in a separate session.
+  With the default trigger, a password manager's auto-type while AnyDesk is running also
+  locks the PC.
 - **IncidentRAG can be over-cautious.** It sometimes refuses questions the corpus does
   answer; the confidence threshold may need tuning for your data.
 
@@ -370,7 +391,8 @@ docs/              architecture, demo script, evaluation report, autostart guide
 src/continuum/
   capture/         Raw Input capture (Capture Layer)
   detection/       features, baseline, model, scorer (Cadence Analysis Engine)
-  response/        lock, device disable/enable, alerts (Block and Alert Handler)
+  response/        lock, device disable/enable, alerts, remote sessions (Block and Alert Handler)
+  remote_guard.py  remote-access typing guard
   runtime.py       the elevated main loop tying the three together
   connector/       FastAPI service and SQLite (Connector API)
   rag/             ingest, retrieval, answers, confidence gate (IncidentRAG)

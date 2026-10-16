@@ -39,7 +39,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from continuum.capture.base import DEFAULT_PUT_TIMEOUT_SECONDS, DEFAULT_QUEUE_MAXSIZE, CaptureSource
-from continuum.common.schemas import DeviceInfo, KeyEvent
+from continuum.common.schemas import SOFTWARE_INPUT_DEVICE_ID, DeviceInfo, KeyEvent
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -635,7 +635,13 @@ class WindowsRawInputCapture(CaptureSource):
                 # Fake-key escape sequences carry no real key information
                 # and must be dropped before anything else happens.
                 if vkey != FAKE_VKEY_ESCAPE:
-                    device_id = self._resolve_device_id(raw.header.hDevice)
+                    # No device handle: Windows created this keystroke from
+                    # software (SendInput), not from a physical keyboard.
+                    device_id = (
+                        self._resolve_device_id(raw.header.hDevice)
+                        if raw.header.hDevice
+                        else SOFTWARE_INPUT_DEVICE_ID
+                    )
                     if device_id is not None:
                         is_break = bool(keyboard.Flags & RI_KEY_BREAK)
                         event_type, press_id, is_repeat = self._press_tracker.handle(

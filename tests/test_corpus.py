@@ -16,8 +16,8 @@ EVAL_PATH = REPO_ROOT / "data" / "eval" / "rag_questions.yaml"
 PLAYBOOKS = sorted(PLAYBOOK_DIR.glob("*.md"))
 
 
-def test_there_are_eight_to_ten_playbooks():
-    assert 8 <= len(PLAYBOOKS) <= 10
+def test_there_are_eight_to_twelve_playbooks():
+    assert 8 <= len(PLAYBOOKS) <= 12
 
 
 @pytest.mark.parametrize("path", PLAYBOOKS, ids=lambda p: p.stem)
@@ -37,13 +37,13 @@ def _eval_data():
     return yaml.safe_load(EVAL_PATH.read_text(encoding="utf-8"))
 
 
-def test_eval_set_has_thirty_answerable_and_ten_unanswerable():
+def test_eval_set_has_thirty_two_answerable_and_ten_unanswerable():
     questions = _eval_data()["questions"]
 
-    assert len(questions) == 40
-    assert sum(q["answerable"] for q in questions) == 30
+    assert len(questions) == 42
+    assert sum(q["answerable"] for q in questions) == 32
     assert sum(not q["answerable"] for q in questions) == 10
-    assert len({q["id"] for q in questions}) == 40
+    assert len({q["id"] for q in questions}) == 42
 
 
 def test_unanswerable_questions_expect_no_sources():

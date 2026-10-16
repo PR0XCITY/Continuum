@@ -137,3 +137,12 @@ class ConnectorClient:
 
     def training_reset(self) -> dict:
         return self._request("DELETE", "/training/baseline")
+
+    def remote(self) -> dict:
+        return self._request("GET", "/remote")
+
+    def remote_allow(self, minutes: int | None = None) -> dict:
+        return self._request("POST", "/remote/allow", json={"minutes": minutes})
+
+    def remote_end_allowance(self) -> dict:
+        return self._request("DELETE", "/remote/allow")

@@ -26,6 +26,7 @@ from continuum.capture.windows_rawinput import (
     derive_pnp_instance_id,
     parse_vendor_and_product_id,
 )
+from continuum.common.schemas import SOFTWARE_INPUT_DEVICE_ID
 
 USB_KEYBOARD_PATH = (
     r"\\?\HID#VID_046D&PID_C52B&MI_00#7&2f4bb3a7&0&0000#{884b96c3-56ef-11d1-bc8c-00a0c91405dd}"
@@ -234,6 +235,26 @@ def test_wnd_proc_converts_a_key_down_into_a_key_event(capture, monkeypatch):
     assert event.is_repeat is False
     expected_fields = {"device_id", "timestamp_ns", "event_type", "press_id", "is_repeat"}
     assert set(event.model_dump()) == expected_fields
+
+
+def test_wnd_proc_tags_input_with_no_device_handle_as_software_input(capture, monkeypatch):
+    # SendInput (remote-access tools, macros) arrives with hDevice NULL.
+    monkeypatch.setattr(
+        capture, "_resolve_device_id", lambda h_device: pytest.fail("must not resolve NULL")
+    )
+    monkeypatch.setattr(capture, "_now_ns", lambda: 42)
+    monkeypatch.setattr(
+        rawinput, "_read_raw_input", lambda lparam: _fake_raw_input(0, vkey=65, flags=0)
+    )
+
+    capture._wnd_proc(hwnd=0, msg=WM_INPUT, wparam=0, lparam=1)
+
+    event = capture.events.get_nowait()
+    assert event.device_id == SOFTWARE_INPUT_DEVICE_ID
+    assert event.event_type == "down"
+    assert set(event.model_dump()) == {
+        "device_id", "timestamp_ns", "event_type", "press_id", "is_repeat"
+    }
 
 
 def test_wnd_proc_filters_the_fake_vkey_escape_sequence(capture, monkeypatch):

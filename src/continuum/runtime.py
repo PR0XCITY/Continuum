@@ -38,6 +38,7 @@ from continuum.capture.factory import create_capture_source
 from continuum.common.config import Settings, get_settings
 from continuum.common.logging import configure_logging, get_logger
 from continuum.common.schemas import (
+    SOFTWARE_INPUT_DEVICE_ID,
     TRIAL_MS_TO_BLOCK,
     TRIAL_MS_TO_LOCK,
     TRIAL_MS_TO_RESPONSE,
@@ -71,6 +72,7 @@ from continuum.recording import (
     poll_baseline_commands,
     save_active_recording,
 )
+from continuum.remote_guard import RemoteGuard
 from continuum.response.alerts import notify
 from continuum.response.blocker_windows import (
     DEFAULT_DISABLED_DEVICES_PATH,
@@ -703,9 +705,29 @@ def process_event(
     connector_db_path: Path,
     recorder: BaselineRecorder | None = None,
     quarantine_locked_at: dict[str, float] | None = None,
+    remote_guard: RemoteGuard | None = None,
 ) -> None:
     if quarantine_locked_at is None:
         quarantine_locked_at = {}
+    # Typing with no physical keyboard behind it (a remote-access tool or a
+    # macro): never scored or recorded as cadence, only checked for
+    # remote-access use.
+    if event.device_id == SOFTWARE_INPUT_DEVICE_ID:
+        if remote_guard is not None:
+            incident = remote_guard.handle(event)
+            if incident is not None:
+                notify(
+                    "Continuum: remote typing blocked",
+                    f"{incident.device.name}: {incident.action_taken.value}.",
+                    device_id=SOFTWARE_INPUT_DEVICE_ID,
+                    event_type="remote_access",
+                    details={
+                        "incident_id": str(incident.incident_id),
+                        "action_taken": incident.action_taken.value,
+                    },
+                )
+                post_or_queue_incident(outbox, http_client, base_url, token, incident)
+        return
     # Recording a training baseline: collect the typing, never score it, so
     # fast training typing can never trigger a lock or a disable.
     if recorder is not None and recorder.active:
@@ -930,6 +952,18 @@ def main(argv: list[str] | None = None) -> None:
     device_buffers: dict[str, _DeviceBuffer] = {}
     pending_since: dict[str, datetime] = {}
     quarantine_locked_at: dict[str, float] = {}
+    remote_guard = RemoteGuard(
+        settings=settings.remote,
+        connector_db_path=connector_db_path,
+        dry_run=settings.response.dry_run,
+    )
+    if settings.remote.enabled:
+        logger.info(
+            "remote-access typing guard on: trigger=%s response=%s",
+            settings.remote.trigger,
+            settings.remote.response,
+        )
+        remote_guard.refresh_status()
 
     identity = RuntimeIdentity(
         started_at=datetime.now(UTC).isoformat(),
@@ -981,6 +1015,7 @@ def main(argv: list[str] | None = None) -> None:
                     connector_db_path=connector_db_path,
                     recorder=recorder,
                     quarantine_locked_at=quarantine_locked_at,
+                    remote_guard=remote_guard,
                 )
 
             now_monotonic = time.monotonic()
@@ -1025,6 +1060,8 @@ def main(argv: list[str] | None = None) -> None:
                     logger.info("loaded new model %s", model.version)
                     print(f"Loaded model {model.version}. Watching for injection attacks.")
                 run_maintenance(blocker, outbox, http_client, base_url, token, connector_db_path)
+                if settings.remote.enabled:
+                    remote_guard.refresh_status()
                 write_runtime_status(
                     connector_db_path,
                     identity,

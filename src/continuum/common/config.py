@@ -104,11 +104,49 @@ class LoggingSettings(StrictSettingsModel):
     directory: Path
 
 
+# Process names of common remote-access tools. Typing that Windows reports
+# as software-generated while one of these runs is treated as someone
+# controlling the PC remotely.
+DEFAULT_REMOTE_TOOLS = (
+    "AnyDesk.exe",
+    "TeamViewer.exe",
+    "TeamViewer_Service.exe",
+    "rustdesk.exe",
+    "UltraViewer_Desktop.exe",
+    "UltraViewer_Service.exe",
+    "ScreenConnect.ClientService.exe",
+    "ScreenConnect.WindowsClient.exe",
+    "AA_v3.exe",
+    "Supremo.exe",
+    "SupremoService.exe",
+    "remoting_host.exe",
+    "QuickAssist.exe",
+    "msra.exe",
+    "LogMeIn.exe",
+    "RemotePCDesktop.exe",
+    "tvnserver.exe",
+    "winvnc.exe",
+)
+
+
+class RemoteSettings(StrictSettingsModel):
+    """Remote-access typing detection: input with no physical keyboard behind it."""
+
+    enabled: bool = True
+    trigger: Literal["remote_tool_running", "any_software_input"] = "remote_tool_running"
+    response: Literal["alert_only", "lock", "lock_and_end_session"] = "lock"
+    min_presses: int = Field(default=3, ge=1, le=100)
+    window_seconds: float = Field(default=5.0, gt=0.0, le=60.0)
+    allow_minutes: int = Field(default=30, ge=1, le=480)
+    tools: list[str] = Field(default_factory=lambda: list(DEFAULT_REMOTE_TOOLS))
+
+
 class Settings(StrictSettingsModel):
     """Top-level, validated, immutable configuration for Continuum."""
 
     detection: DetectionSettings
     response: ResponseSettings
+    remote: RemoteSettings = Field(default_factory=RemoteSettings)
     connector: ConnectorSettings
     rag: RagSettings
     dashboard: DashboardSettings

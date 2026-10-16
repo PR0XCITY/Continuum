@@ -36,6 +36,40 @@ ATTACK_PATTERN_LABELS = {
 }
 
 
+REMOTE_RESPONSE_LABELS = {
+    "alert_only": "alert only",
+    "lock": "lock the PC",
+    "lock_and_end_session": "lock the PC and end the remote session",
+}
+
+
+def remote_summary(status: dict[str, Any], *, now: datetime) -> dict[str, str]:
+    """The Remote access card's state: a badge label and colour, and a hint line."""
+    if not status.get("enabled"):
+        return {"badge": "off", "colour": "gray", "hint": "Remote-access typing detection is off."}
+    response = REMOTE_RESPONSE_LABELS.get(status.get("response", ""), status.get("response", ""))
+    if status.get("allowed"):
+        until = parse_time(status.get("allowed_until"))
+        until_text = until.astimezone().strftime("%H:%M") if until else "soon"
+        return {
+            "badge": "allowed",
+            "colour": "yellow",
+            "hint": f"Remote typing is let through until {until_text}.",
+        }
+    tools = status.get("tools_running") or []
+    if tools:
+        return {
+            "badge": "watching",
+            "colour": "blue",
+            "hint": f"Running now: {', '.join(tools)}. Remote typing will {response}.",
+        }
+    return {
+        "badge": "protected",
+        "colour": "green",
+        "hint": f"No remote-access tool running. Remote typing would {response}.",
+    }
+
+
 def parse_time(value: str | None) -> datetime | None:
     if not value:
         return None

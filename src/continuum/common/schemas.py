@@ -63,6 +63,11 @@ _FORBIDDEN_KEY_CONTENT_FIELDS = frozenset(
 _CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 EventType = Literal["down", "up"]
+# The device id given to keystrokes Windows reports with no physical
+# keyboard behind them (Raw Input's hDevice is NULL): input created by
+# software, such as a remote-access tool or a macro, via SendInput.
+SOFTWARE_INPUT_DEVICE_ID = "software-input"
+
 Verdict = Literal["normal", "suspicious", "blocked"]
 BusType = Literal["USB", "PS2", "Bluetooth", "Unknown"]
 
@@ -83,6 +88,9 @@ class AttackPattern(str, Enum):
     BURST_INJECTION = "burst_injection"
     SLOWED_INJECTION = "slowed_injection"
     RANDOMIZED_INJECTION = "randomized_injection"
+    # Typing Windows reports as software-generated (no physical keyboard)
+    # while a remote-access tool runs: someone controlling the PC remotely.
+    REMOTE_ACCESS_INPUT = "remote_access_input"
     UNKNOWN = "unknown"
 
 
@@ -95,6 +103,8 @@ class ActionTaken(str, Enum):
     # Windows refused to disable the keyboard, so Continuum locked the
     # workstation and blocked the device itself (see DeviceBlocker).
     LOCKED_AND_QUARANTINED = "locked_and_quarantined"
+    # Locked, and the remote-access tool's processes were ended.
+    LOCKED_AND_ENDED_REMOTE = "locked_and_ended_remote"
     ALERT_ONLY = "alert_only"
     NONE = "none"
 

@@ -66,6 +66,57 @@ response:
   # a first run on a new machine.
   dry_run: false
 
+remote:
+  # Remote-access typing detection. Windows marks keystrokes that software
+  # creates (AnyDesk, TeamViewer, a macro) as coming from no physical
+  # keyboard; Raw Input reports them with an empty device handle. Only
+  # their timing is used, never which keys they were.
+  enabled: true
+
+  # "remote_tool_running": react only while one of the tools below is
+  #   running, so an on-screen keyboard or a password manager's auto-type
+  #   does not lock the PC on an ordinary day. Default.
+  # "any_software_input": react to any software-generated typing.
+  trigger: remote_tool_running
+
+  # "alert_only": notify and record an incident only.
+  # "lock": also lock the workstation. Default.
+  # "lock_and_end_session": also end the remote tool's processes, which
+  #   cuts the remote session (needs the runtime elevated for tools that
+  #   run as a service). The tool can be started again afterwards.
+  response: lock
+
+  # Software-generated key presses within window_seconds that count as
+  # someone typing remotely. A single synthetic key press is common and
+  # harmless; a run of them is typing.
+  min_presses: 3
+  window_seconds: 5
+
+  # How long the dashboard's "Allow remote access" button lets remote
+  # typing through, for when you are using a remote tool yourself.
+  allow_minutes: 30
+
+  # Process names checked for "remote_tool_running". Matching ignores case.
+  tools:
+    - AnyDesk.exe
+    - TeamViewer.exe
+    - TeamViewer_Service.exe
+    - rustdesk.exe
+    - UltraViewer_Desktop.exe
+    - UltraViewer_Service.exe
+    - ScreenConnect.ClientService.exe
+    - ScreenConnect.WindowsClient.exe
+    - AA_v3.exe
+    - Supremo.exe
+    - SupremoService.exe
+    - remoting_host.exe
+    - QuickAssist.exe
+    - msra.exe
+    - LogMeIn.exe
+    - RemotePCDesktop.exe
+    - tvnserver.exe
+    - winvnc.exe
+
 connector:
   host: 127.0.0.1
   port: 8731

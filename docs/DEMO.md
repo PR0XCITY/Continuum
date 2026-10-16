@@ -185,6 +185,28 @@ released automatically after 10 minutes, and the runtime releases
 everything when it starts and when it stops. These rails exist so that a
 false alarm can never leave someone without a working keyboard.
 
+## Bonus: typing through a remote-access tool (1 minute)
+
+Needs AnyDesk (or TeamViewer) on the demo PC and on a phone or a second
+computer. Connect from the other device first.
+
+1. On the dashboard's **Live status** page, the **Remote access** card says
+   `WATCHING` and lists `AnyDesk.exe`.
+2. From the other device, click into Notepad on the demo PC and type a
+   few words.
+
+Expected:
+- After the third key press **the screen locks**.
+- A notification, **Continuum: remote typing blocked**, appears, and the
+  Incidents page shows a `remote access input` incident naming AnyDesk.
+- After signing back in, click **Allow for 30 min** on the Remote access
+  card and type remotely again: nothing locks. Click **Stop allowing**
+  afterwards.
+
+Say: software-created keystrokes reach Windows with no physical keyboard
+behind them, so Continuum can tell remote typing from local typing
+without looking at what was typed.
+
 ## After the demo
 
 ```

@@ -66,6 +66,43 @@ flowchart LR
 - Is observe-only: Raw Input delivers a copy of each keystroke and cannot
   hold one back. Every keystroke reaches the focused window whether or not
   Continuum later blocks the device.
+- Tags keystrokes that arrive with no device handle (`hDevice` NULL) with
+  the fixed device id `software-input`. Windows does this for input that
+  software creates with `SendInput`, which is how remote-access tools such
+  as AnyDesk and TeamViewer, and macros, type. Verified on Windows 11:
+  every injected keystroke reported `hDevice` 0. These events carry the
+  same fields as any other: timing and down/up only.
+
+## Remote-access typing guard
+
+`src/continuum/detection/remote_input.py`, `src/continuum/remote_guard.py`,
+`src/continuum/response/remote_session.py`.
+
+- The runtime sends every `software-input` event to the guard and never to
+  the cadence engine or a baseline recording.
+- `RemoteInputMonitor` counts software-generated key presses in a sliding
+  window, timed by the keystrokes' own capture timestamps. `remote.min_presses`
+  (3) within `remote.window_seconds` (5) is a run of typing; one trigger
+  per 30-second cooldown.
+- On a trigger, `remote_session.running_remote_tools` lists running
+  process names with the Toolhelp API and keeps only those on
+  `remote.tools`. With the default `trigger: remote_tool_running`, nothing
+  happens unless one is running, so an on-screen keyboard or a password
+  manager's auto-type does not lock the PC.
+- If the dashboard's allow window is open (`remote_status.allowed_until`),
+  the typing is let through and logged.
+- Otherwise the guard responds by `remote.response`: `alert_only`, `lock`
+  (default), or `lock_and_end_session`, which also ends the tool's
+  processes with `taskkill`. `response.dry_run` turns any of them into an
+  alert.
+- The incident has attack pattern `remote_access_input`, MITRE technique
+  T1219 Remote Access Software, the device `software-input` named after
+  the tools that were running, and the action taken. It goes through the
+  same outbox, connector validation and IncidentRAG ingestion as any other
+  incident, and the `pb-remote-access-typing-response` playbook covers the
+  response.
+- Every maintenance tick the runtime writes which configured tools are
+  running into `remote_status` for the dashboard's Remote access card.
 
 ## Cadence Analysis Engine
 

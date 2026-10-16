@@ -27,7 +27,7 @@ import json
 import threading
 from collections.abc import AsyncIterator, Generator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -196,6 +196,29 @@ class SettingsResponse(BaseModel):
     settings: settings_store.EditableSettings
     env_overridden_fields: list[str]
     applies_on: Literal["runtime_restart"] = "runtime_restart"
+
+
+class RemoteAllowRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    # None: the configured remote.allow_minutes.
+    minutes: int | None = Field(default=None, ge=1, le=480)
+
+
+class RemoteStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    trigger: str
+    response: str
+    allow_minutes: int
+    allowed: bool
+    allowed_until: str | None = None
+    tools_running: list[str] = Field(default_factory=list)
+    last_detected_at: str | None = None
+    last_action: str | None = None
+    last_tools: list[str] = Field(default_factory=list)
+    updated_at: str | None = None
 
 
 class TrainingStartRequest(BaseModel):
@@ -486,6 +509,46 @@ def create_app(
             sensitivity=row.sensitivity,
             devices=[RuntimeDevice(**device) for device in json.loads(row.devices_json or "[]")],
         )
+
+    remote_settings = resolved_settings.remote
+
+    def remote_status_response(row: db.RemoteStatusRow | None) -> RemoteStatusResponse:
+        allowed_until = row.allowed_until if row else None
+        allowed = (
+            allowed_until is not None
+            and datetime.fromisoformat(allowed_until) > datetime.now(UTC)
+        )
+        return RemoteStatusResponse(
+            enabled=remote_settings.enabled,
+            trigger=remote_settings.trigger,
+            response=remote_settings.response,
+            allow_minutes=remote_settings.allow_minutes,
+            allowed=allowed,
+            allowed_until=allowed_until if allowed else None,
+            tools_running=json.loads(row.tools_running_json or "[]") if row else [],
+            last_detected_at=row.last_detected_at if row else None,
+            last_action=row.last_action if row else None,
+            last_tools=json.loads(row.last_tools_json or "[]") if row else [],
+            updated_at=row.updated_at if row else None,
+        )
+
+    @app.get("/remote", response_model=RemoteStatusResponse, dependencies=[auth])
+    def get_remote(session: Session = Depends(get_db)) -> RemoteStatusResponse:
+        return remote_status_response(db.get_remote_status(session))
+
+    @app.post("/remote/allow", response_model=RemoteStatusResponse, dependencies=[auth])
+    def allow_remote(
+        request: RemoteAllowRequest, session: Session = Depends(get_db)
+    ) -> RemoteStatusResponse:
+        minutes = request.minutes or remote_settings.allow_minutes
+        until = datetime.now(UTC) + timedelta(minutes=minutes)
+        logger.info("remote typing allowed for %d minutes", minutes)
+        return remote_status_response(db.set_remote_allowance(session, until))
+
+    @app.delete("/remote/allow", response_model=RemoteStatusResponse, dependencies=[auth])
+    def end_remote_allowance(session: Session = Depends(get_db)) -> RemoteStatusResponse:
+        logger.info("remote typing allowance ended")
+        return remote_status_response(db.set_remote_allowance(session, None))
 
     @app.get("/calibration", response_model=CalibrationResponse, dependencies=[auth])
     def calibration_summary() -> CalibrationResponse:

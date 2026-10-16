@@ -31,6 +31,12 @@ Shared-file contract with continuum.runtime (see that module):
                      and on baseline_stop saves the windows to the
                      baseline file and marks the row "saved" or
                      "failed" with a message.
+    remote_status    a single row (id 1) about remote-access typing.
+                     continuum.runtime UPSERTs which configured
+                     remote-access tools are running and its last
+                     detection; POST /remote/allow and DELETE
+                     /remote/allow write allowed_until, which the
+                     runtime reads before reacting to remote typing.
 
 These tables are created here with SQLAlchemy and written there with
 raw sqlite3 against the exact same column names; if this schema
@@ -55,6 +61,8 @@ LIVE_SNAPSHOTS_TABLE = "live_snapshots"
 RUNTIME_STATUS_TABLE = "runtime_status"
 RUNTIME_STATUS_ROW_ID = 1
 BASELINE_SESSIONS_TABLE = "baseline_sessions"
+REMOTE_STATUS_TABLE = "remote_status"
+REMOTE_STATUS_ROW_ID = 1
 
 COMMAND_UNBLOCK = "unblock"
 COMMAND_BASELINE_START = "baseline_start"
@@ -155,6 +163,18 @@ class RuntimeStatusRow(Base):
     base_threshold: Mapped[float] = mapped_column(Float)
     sensitivity: Mapped[int] = mapped_column(Integer)
     devices_json: Mapped[str] = mapped_column(Text, default="[]")
+
+
+class RemoteStatusRow(Base):
+    __tablename__ = REMOTE_STATUS_TABLE
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    allowed_until: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tools_running_json: Mapped[str] = mapped_column(Text, default="[]")
+    last_detected_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_action: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_tools_json: Mapped[str] = mapped_column(Text, default="[]")
+    updated_at: Mapped[str] = mapped_column(String(64))
 
 
 def resolve_database_path(settings: Settings) -> Path:
@@ -310,6 +330,26 @@ def get_live_snapshots(session: Session) -> list[LiveSnapshotRow]:
 
 def get_runtime_status(session: Session) -> RuntimeStatusRow | None:
     return session.get(RuntimeStatusRow, RUNTIME_STATUS_ROW_ID)
+
+
+# --- remote-access status (shared with continuum.runtime) ---------------------
+
+
+def get_remote_status(session: Session) -> RemoteStatusRow | None:
+    return session.get(RemoteStatusRow, REMOTE_STATUS_ROW_ID)
+
+
+def set_remote_allowance(session: Session, allowed_until: datetime | None) -> RemoteStatusRow:
+    """Let remote typing through until the given time, or stop allowing it (None)."""
+    now = datetime.now(UTC).isoformat()
+    row = get_remote_status(session)
+    if row is None:
+        row = RemoteStatusRow(id=REMOTE_STATUS_ROW_ID, updated_at=now)
+        session.add(row)
+    row.allowed_until = allowed_until.astimezone(UTC).isoformat() if allowed_until else None
+    session.commit()
+    session.refresh(row)
+    return row
 
 
 # --- baseline recording sessions (shared with continuum.runtime) --------------

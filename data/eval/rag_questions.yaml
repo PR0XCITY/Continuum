@@ -1,6 +1,6 @@
 # IncidentRAG evaluation questions.
 #
-# 30 answerable questions (20 about playbooks, 10 about incident history)
+# 32 answerable questions (22 about playbooks, 10 about incident history)
 # and 10 unanswerable or off-topic questions that IncidentRAG must
 # abstain on.
 #
@@ -117,6 +117,16 @@ questions:
     question: How long does a disabled device stay disabled before Continuum releases it automatically?
     answerable: true
     expected_doc_ids: [pb-releasing-blocked-devices]
+
+  - id: pb-21
+    question: Someone was typing on my PC through AnyDesk and Continuum locked it. What should I do now?
+    answerable: true
+    expected_doc_ids: [pb-remote-access-typing-response]
+
+  - id: pb-22
+    question: When is it safe to use the Allow remote access button on the dashboard?
+    answerable: true
+    expected_doc_ids: [pb-remote-access-typing-response]
 
   # --- incident history (seed 1337) -----------------------------------------
   - id: inc-01

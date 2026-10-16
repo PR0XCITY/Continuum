@@ -26,6 +26,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from continuum.common.config import get_settings
+from continuum.common.schemas import SOFTWARE_INPUT_DEVICE_ID
 from continuum.dashboard import helpers, style
 from continuum.dashboard.api import ApiError, ConnectorClient
 from continuum.detection.scorer import (
@@ -187,6 +188,50 @@ def _unblock_button(
             )
 
 
+def _remote_access_panel(client: ConnectorClient, *, now: datetime) -> None:
+    """Remote-access typing: status, last detection, and the allow switch."""
+    st.subheader("Remote access")
+    try:
+        status = client.remote()
+    except ApiError as error:
+        st.caption(f"Remote-access status unavailable: {error}")
+        return
+    summary = helpers.remote_summary(status, now=now)
+    last = status.get("last_detected_at")
+    last_text = (
+        f"Last remote typing blocked {helpers.format_relative_age(last, now=now)}"
+        + (f" ({', '.join(status['last_tools'])})" if status.get("last_tools") else "")
+        + "."
+        if last
+        else "No remote typing blocked yet."
+    )
+    body = (
+        f'<div class="ct-row"><div class="ct-card-title">Typing through remote-access tools'
+        f"</div>{style.badge(summary['badge'], summary['colour'])}</div>"
+        f'<div class="ct-hint">{style.escape(summary["hint"])}</div>'
+        f'<div class="ct-hint">{style.escape(last_text)}</div>'
+    )
+    left, right = st.columns([3, 1])
+    left.markdown(style.card(body), unsafe_allow_html=True)
+    if not status.get("enabled"):
+        return
+    try:
+        if status.get("allowed"):
+            if right.button("Stop allowing", key="remote_end_allow", use_container_width=True):
+                client.remote_end_allowance()
+                st.rerun(scope="fragment")
+        elif right.button(
+            f"Allow for {status.get('allow_minutes', 30)} min",
+            key="remote_allow",
+            use_container_width=True,
+            help="Use this when you are controlling this PC remotely yourself.",
+        ):
+            client.remote_allow()
+            st.rerun(scope="fragment")
+    except ApiError as error:
+        right.error(str(error))
+
+
 @st.fragment(run_every=LIVE_REFRESH_SECONDS)
 def _live_panel(client: ConnectorClient) -> None:
     now = datetime.now(UTC)
@@ -295,6 +340,8 @@ def _live_panel(client: ConnectorClient) -> None:
                     column, client, device, runtime_running=bool(runtime["running"])
                 )
 
+    _remote_access_panel(client, now=now)
+
     st.subheader("Inter-key interval, last 60 seconds")
     if not history:
         st.caption(
@@ -390,20 +437,25 @@ def _incident_detail(client: ConnectorClient, incident: dict, runtime_running: b
         args=(helpers.question_about_incident(incident),),
         use_container_width=True,
     )
-    with right.popover("Unblock device", use_container_width=True):
-        st.write(
-            "Lift the block on this device now instead of waiting for the automatic release. "
-            "Only do this once the device has been examined and is known to be safe."
-        )
-        if not runtime_running:
-            st.caption("The runtime is not running, so the command waits until it starts.")
-        if st.button("Confirm unblock", type="primary", key=f"unblock_{incident['incident_id']}"):
-            try:
-                client.unblock(device["device_id"])
-            except ApiError as error:
-                st.error(str(error))
-            else:
-                st.success("Unblock queued. The runtime applies it within a few seconds.")
+    if device["device_id"] == SOFTWARE_INPUT_DEVICE_ID:
+        right.caption("Remote typing: no physical device was blocked.")
+    else:
+        with right.popover("Unblock device", use_container_width=True):
+            st.write(
+                "Lift the block on this device now instead of waiting for the automatic release. "
+                "Only do this once the device has been examined and is known to be safe."
+            )
+            if not runtime_running:
+                st.caption("The runtime is not running, so the command waits until it starts.")
+            if st.button(
+                "Confirm unblock", type="primary", key=f"unblock_{incident['incident_id']}"
+            ):
+                try:
+                    client.unblock(device["device_id"])
+                except ApiError as error:
+                    st.error(str(error))
+                else:
+                    st.success("Unblock queued. The runtime applies it within a few seconds.")
 
     if incident.get("features_summary"):
         with st.expander("Cadence features at detection"):
